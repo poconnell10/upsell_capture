@@ -30,21 +30,48 @@ Built from the four interactive prototypes as a single **Vite + React** app.
 src/
   data/catalog.js        shared product / agent / tax data
   lib/format.js          money, $5 rounding, date labels
-  lib/useLocalStorage.js persisted-state hook
-  store/captures.jsx     shared captured-sales store + context
-  components/             TopBar (nav) + small UI primitives
-  pages/                  one file per screen
+  lib/supabase.js        Supabase client (reads VITE_SUPABASE_* env)
+  lib/useLocalStorage.js persisted-state hook (drafts)
+  store/captureStore.js  real Supabase queries: fetch / insert / delete captures
+  auth/                  AuthProvider, RequireAuth route guard
+  components/            TopBar (nav + account) + small UI primitives
+  pages/                 one file per screen + Login
   App.jsx, main.jsx      router + entry
+supabase/
+  migrations/0001_init.sql  schema + RLS policies
+  seed.sql                  demo hotels + linking instructions
 ```
+
+## Backend (Supabase)
+
+Postgres + Auth + Row Level Security. Tables: `hotels`, `agents`, `captures`
+(+ `vendor_admins`).
+
+- **Tenancy via RLS.** A signed-in auth user is matched to an `agents` row by
+  email; they can only read/write their own hotel's data. Emails listed in
+  `vendor_admins` get cross-hotel (vendor) read access for reconciliation.
+- Policies use `SECURITY DEFINER` helpers (`is_vendor()`, `current_hotel_id()`)
+  so they don't recurse into the tables they protect.
+
+### One-time setup
+
+1. Create a Supabase project.
+2. Run `supabase/migrations/0001_init.sql` in the SQL editor (or `supabase db push`).
+3. Optionally run `supabase/seed.sql` for demo hotels.
+4. Create agent users in **Auth → Users**, then insert matching `agents` rows
+   (email must match). Add vendor emails to `vendor_admins`.
+5. Copy `.env.example` → `.env` and set `VITE_SUPABASE_URL` /
+   `VITE_SUPABASE_ANON_KEY`. **Credentials come from env only — never hardcoded.**
 
 ## Develop
 
 ```bash
 npm install
-npm run dev      # local dev server (http://localhost:5173)
-npm run build    # production build → dist/
-npm run preview  # preview the production build
+cp .env.example .env   # then fill in your Supabase URL + anon key
+npm run dev            # local dev server (http://localhost:5173)
+npm run build          # production build → dist/
+npm run preview        # preview the production build
 ```
 
-> Routing uses `BrowserRouter`. When deploying the static `dist/` build, configure
-> the host to serve `index.html` for unknown paths (SPA fallback) so deep links work.
+> Routing uses `BrowserRouter`. When deploying the static `dist/` build (e.g.
+> Vercel), configure an SPA fallback so deep links resolve to `index.html`.

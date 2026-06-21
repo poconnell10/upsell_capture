@@ -2,6 +2,11 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Local secrets — keep real credentials out of git; commit .env.example instead
+.env
+.env.*
+!.env.example
 .DS_Store
 .vite
 npm-debug.log*
