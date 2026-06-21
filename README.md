@@ -1,4 +1,4 @@
-# BookMax — Upsell Capture
+Upsell Capture
 
 Front-desk module for capturing room upgrades and ancillary ("other revenue")
 sales against a booking, and reporting on what agents have sold.
