@@ -83,7 +83,7 @@ password-setup invite; admins can also **reset an agent's password** directly.
 ### One-time setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/0001_init.sql`, `0002_admin.sql`, then `0003_reset_password.sql`
+2. Run `supabase/migrations/0001_init.sql`, `0002_admin.sql`, then `0003_agent_auth_uid.sql`
    in the SQL editor (or `supabase db push`).
 3. Optionally run `supabase/seed.sql` for demo hotels.
 4. Add vendor emails to `vendor_admins`, sign in, and provision hotels/agents from
