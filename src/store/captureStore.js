@@ -107,16 +107,12 @@ export function groupByConfirmation(rows) {
   return [...m.values()];
 }
 
-// Date-range bounds for the dashboard's Today / 7-day / MTD toggle.
+// Date-range bounds for the dashboard's Today / MTD / All toggle.
 export function rangeBounds(range) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (range === 'today') return { from: startOfToday, to: null };
-  if (range === 'd7') {
-    const from = new Date(startOfToday);
-    from.setDate(from.getDate() - 6);
-    return { from, to: null };
-  }
+  if (range === 'all') return { from: null, to: null };
   // mtd
   return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: null };
 }
