@@ -63,32 +63,46 @@ Postgres + Auth + Row Level Security. Tables: `hotels`, `agents`, `captures`
 ### Vendor admin panel (`/admin`)
 
 Gated to vendor admins (`RequireVendor`); everyone else is redirected to `/`.
-Manage hotels (add / inline-edit / deactivate) and their agents
-(`/admin/hotels/:hotelId`). Adding an agent inserts the `agents` row and sends a
+Manage hotels (add / inline-edit / deactivate), their agents
+(`/admin/hotels/:hotelId`), **webhooks** (`/admin/webhooks`), and read the built-in
+**docs** (`/admin/docs`). Adding an agent inserts the `agents` row and sends a
 password-setup invite; admins can also **reset an agent's password** directly.
 
-> **Security:** the `auth.admin.*` calls require the **service-role key** and must
-> never run in the browser. They live in edge functions (service role stays
-> server-side; each verifies the caller is a vendor admin):
+### Webhooks
+
+Captures are pushed to external endpoints in near real-time. After a capture
+inserts, the client fires the `capture-webhook` function (fire-and-forget), which
+delivers to every active **global** webhook (`hotel_id IS NULL`, e.g. IN-Gauge)
+and the capture's **hotel** webhook, with `Authorization: Bearer <secret>`,
+retrying up to 3× and logging each attempt to `webhook_logs`. Agents see a masked,
+read-only view of their hotel webhook (and a "Test" button) under
+**Integrations** (`/integrations`) — the raw `secret` is never sent to agents
+(base table is vendor-only; agents read the masked `current_hotel_webhook()` RPC).
+
+> **Security:** the `auth.admin.*` / service-role calls require the **service-role
+> key** and must never run in the browser. They live in edge functions (service
+> role stays server-side; each verifies the caller):
 >
 > - `invite-agent` — `inviteUserByEmail` (email invite)
 > - `reset-agent-password` — `updateUserById` (set a password directly)
+> - `capture-webhook` — deliver a capture to matching webhooks (+ test mode)
 >
 > ```bash
 > supabase functions deploy invite-agent
 > supabase functions deploy reset-agent-password
+> supabase functions deploy capture-webhook
 > supabase secrets set SERVICE_ROLE_KEY=<your-service-role-key>
 > ```
 
 ### One-time setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/0001_init.sql`, `0002_admin.sql`, then `0003_reset_password.sql`
-   in the SQL editor (or `supabase db push`).
+2. Run the migrations in order (SQL editor or `supabase db push`):
+   `0001_init.sql`, `0002_admin.sql`, `0003_agent_auth_uid.sql`, `0004_webhooks.sql`.
 3. Optionally run `supabase/seed.sql` for demo hotels.
 4. Add vendor emails to `vendor_admins`, sign in, and provision hotels/agents from
    `/admin`. (Or seed `agents` rows manually — email must match the auth user.)
-5. Deploy the invite function: `supabase functions deploy invite-agent`.
+5. Deploy the edge functions (see commands above) and set `SERVICE_ROLE_KEY`.
 6. Copy `.env.example` → `.env` and set `VITE_SUPABASE_URL` /
    `VITE_SUPABASE_ANON_KEY`. **Credentials come from env only — never hardcoded.**
 

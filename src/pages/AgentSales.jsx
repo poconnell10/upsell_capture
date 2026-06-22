@@ -9,7 +9,7 @@ import { fetchCaptures, fetchAgents, insertCaptures, rangeBounds } from '../stor
 export default function AgentSales() {
   const { agent: me, isVendor } = useAuth();
 
-  const [range, setRange] = useState('today'); // today | d7 | mtd
+  const [range, setRange] = useState('today'); // today | mtd | all
   const [view, setView] = useState('lines'); // lines | agents
   const [agentF, setAgentF] = useState('all'); // 'all' | agents.id
   const [toast, setToast] = useState('');
@@ -42,7 +42,7 @@ export default function AgentSales() {
     return () => { active = false; };
   }, [range, agentF, refreshKey]);
 
-  const rangeLabel = range === 'today' ? 'Today' : range === 'd7' ? 'Last 7 days' : 'Month to date';
+  const rangeLabel = range === 'today' ? 'Today' : range === 'all' ? 'All time' : 'Month to date';
 
   const total = rows.reduce((s, r) => s + r.amount, 0);
   const roomRev = rows.filter((r) => r.type === 'Room').reduce((s, r) => s + r.amount, 0);
@@ -64,16 +64,28 @@ export default function AgentSales() {
       .sort((a, b) => b.total - a.total);
   }, [rows]);
 
+  // YYYY-MM-DD in local time.
+  const ymd = (d) => {
+    const x = new Date(d);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
+  const csvCell = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+
   const exportCsv = () => {
-    const head = ['Date', 'Confirmation', 'Agent ID', 'Agent', 'Product', 'Type', 'Qty', 'Unit', 'Amount'];
-    const lines = rows.map((r) => [DLABEL(r.daysAgo), r.conf, r.agentId, r.agent, r.product, r.type, r.qty, r.unit, r.amount].join(','));
+    const head = ['Date', 'Confirmation', 'Product', 'Type', 'Qty', 'Unit Price', 'Amount'];
+    const lines = rows.map((r) =>
+      [ymd(r.capturedAt), r.conf, r.product, r.type, r.qty, r.unit, r.amount].map(csvCell).join(','),
+    );
     const csv = [head.join(','), ...lines].join('\n');
     try {
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'agent-sales-' + range + '.csv';
+      a.download = `upsell-capture-${range}-${ymd(new Date())}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -94,7 +106,7 @@ export default function AgentSales() {
             <div style={{ fontSize: 13, color: 'var(--gray)', marginTop: 2 }}>Every captured product is a line · {rangeLabel}</div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <Seg opts={[['today', 'Today'], ['d7', '7 days'], ['mtd', 'MTD']]} val={range} set={setRange} />
+            <Seg opts={[['today', 'Today'], ['mtd', 'MTD'], ['all', 'All']]} val={range} set={setRange} />
             <button onClick={() => setCapOpen(true)} style={{ padding: '7px 13px', background: 'var(--teal)', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 12.5, fontWeight: 600, color: '#fff' }}>+ Capture sale</button>
             <button onClick={exportCsv} style={{ padding: '7px 13px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6 }}>↓ Export CSV</button>
           </div>

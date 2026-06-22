@@ -61,15 +61,17 @@ Deno.serve(async (req) => {
     return json(400, { error: `Password must be at least ${MIN_PASSWORD} characters.` });
   }
 
-  const admin = createClient(url, serviceKey);
-
-  // Resolve the agent's auth user id (linked by email).
-  const { data: uid, error: uidErr } = await admin.rpc('agent_auth_uid', { p_agent_id: agentId });
+  // Resolve the agent's auth user id (linked by email). Called via the caller's
+  // client because agent_auth_uid() is granted to `authenticated`; it's a
+  // SECURITY DEFINER function, so it can still read auth.users.
+  const { data: uid, error: uidErr } = await caller.rpc('agent_auth_uid', { p_agent_id: agentId });
   if (uidErr) return json(500, { error: uidErr.message });
   if (!uid) {
     return json(404, { error: 'No auth user for this agent — they may not have accepted an invite yet.' });
   }
 
+  // Privileged password update — service role only.
+  const admin = createClient(url, serviceKey);
   const { error } = await admin.auth.admin.updateUserById(uid, { password: newPassword });
   if (error) return json(400, { error: error.message });
 
