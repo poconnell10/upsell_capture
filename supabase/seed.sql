@@ -20,5 +20,5 @@ on conflict (id) do nothing;
 --
 -- Example: grant vendor (all-hotels) access.
 --
--- insert into public.vendor_admins (email) values ('ops@bookmax.test')
+-- insert into public.vendor_admins (email) values ('ops@upsellcapture.test')
 -- on conflict (email) do nothing;

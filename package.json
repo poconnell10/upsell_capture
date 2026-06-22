@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "BookMax upsell capture module — front-desk room upgrade & ancillary revenue capture.",
+  "description": "Upsell Capture — front-desk room upgrade & ancillary revenue capture module.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

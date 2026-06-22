@@ -43,8 +43,8 @@ export default function Login() {
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 20 }}>
       <div style={{ width: 380, maxWidth: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center', marginBottom: 18 }}>
-          <span style={{ width: 30, height: 30, borderRadius: 7, background: 'var(--teal)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 16, fontWeight: 700 }}>B</span>
-          <span style={{ fontSize: 18, fontWeight: 600 }}>BookMax</span>
+          <span style={{ width: 30, height: 30, borderRadius: 7, background: 'var(--teal)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 16, fontWeight: 700 }}>U</span>
+          <span style={{ fontSize: 18, fontWeight: 600 }}>Upsell Capture</span>
         </div>
 
         <form onSubmit={submit} style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '24px 22px' }}>

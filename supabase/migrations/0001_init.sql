@@ -1,4 +1,4 @@
--- BookMax upsell capture — initial schema + Row Level Security.
+-- Upsell Capture — initial schema + Row Level Security.
 --
 -- Multi-tenant model: every hotel is a client. Agents (linked to a Supabase
 -- auth user by email) may only read/write their own hotel's data. Vendor

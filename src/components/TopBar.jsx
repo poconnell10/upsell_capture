@@ -28,7 +28,7 @@ export function TopBar({ title, kicker, right }) {
           display: 'grid', placeItems: 'center', fontSize: 14, fontWeight: 700,
         }}
       >
-        B
+        U
       </span>
       <span style={{ fontSize: 15, fontWeight: 600 }}>{title}</span>
       {kicker && <span style={{ fontSize: 11.5, color: 'var(--faint)' }}>{kicker}</span>}
