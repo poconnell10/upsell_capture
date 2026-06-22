@@ -1,11 +1,16 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 
+// Links every agent sees.
 const NAV = [
   ['Agent Sales', '/'],
   ['Capture Sale', '/capture'],
+];
+// Links only vendor admins see.
+const VENDOR_NAV = [
   ['Rooms & Rates', '/rooms'],
   ['Other Revenue', '/other'],
+  ['Admin', '/admin'],
 ];
 
 // Shared top bar + primary nav. `right` renders the property / user chip per page.
@@ -34,7 +39,7 @@ export function TopBar({ title, kicker, right }) {
       <span style={{ fontSize: 15, fontWeight: 600 }}>{title}</span>
       {kicker && <span style={{ fontSize: 11.5, color: 'var(--faint)' }}>{kicker}</span>}
       <nav style={{ display: 'flex', gap: 2, marginLeft: 16 }}>
-        {[...NAV, ...(isVendor ? [['Admin', '/admin']] : [])].map(([label, to]) => (
+        {[...NAV, ...(isVendor ? VENDOR_NAV : [])].map(([label, to]) => (
           <NavLink
             key={to}
             to={to}
