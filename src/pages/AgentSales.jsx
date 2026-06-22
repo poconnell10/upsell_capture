@@ -1,58 +1,48 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { TopBar, PropertyChip } from '../components/TopBar.jsx';
 import { Seg, KPI, Toast } from '../components/ui.jsx';
-import { AGENTS, ROOM_TYPES, RT_RATE, OTHER_CATALOG, agentName } from '../data/catalog.js';
-import { money, round5, DLABEL } from '../lib/format.js';
-import { useCaptures, captureToLines } from '../store/captures.jsx';
-
-const ROOM_PRODUCTS = ['Suite upgrade', 'Executive Room upgrade', 'Disney View upgrade', 'Deluxe King upgrade', 'Corner Room upgrade'];
-const OTHER_PRODUCTS = ['Late checkout', 'Early arrival'];
-
-// Deterministic pseudo-random line items across 30 days. Each captured product = one row.
-function genRows() {
-  let seed = 7;
-  const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
-  const rows = [];
-  let id = 1;
-  const CONF = () => 'CN-' + (88000 + Math.floor(rnd() * 1800));
-  for (let day = 0; day < 30; day++) {
-    const dayCaptures = 4 + Math.floor(rnd() * 7); // 4–10 sales/day
-    for (let c = 0; c < dayCaptures; c++) {
-      const a = AGENTS[Math.floor(rnd() * AGENTS.length)];
-      const conf = CONF();
-      const room = ROOM_PRODUCTS[Math.floor(rnd() * ROOM_PRODUCTS.length)];
-      const nights = 1 + Math.floor(rnd() * 4);
-      const perNight = (Math.floor(rnd() * 8) + 5) * 5; // $25–$60
-      rows.push({ id: id++, daysAgo: day, conf, agentId: a[0], agent: a[1], product: room, type: 'Room', qty: nights, unit: perNight, amount: perNight * nights });
-      // ~45% also have an other-revenue line on the same confirmation
-      if (rnd() < 0.45) {
-        const op = OTHER_PRODUCTS[Math.floor(rnd() * OTHER_PRODUCTS.length)];
-        const amt = round5(30 + Math.floor(rnd() * 4) * 5);
-        rows.push({ id: id++, daysAgo: day, conf, agentId: a[0], agent: a[1], product: op, type: 'Other', qty: 1, unit: amt, amount: amt });
-      }
-    }
-  }
-  return rows;
-}
+import { ROOM_TYPES, RT_RATE, OTHER_CATALOG } from '../data/catalog.js';
+import { money, DLABEL } from '../lib/format.js';
+import { useAuth } from '../auth/AuthProvider.jsx';
+import { fetchCaptures, fetchAgents, insertCaptures, rangeBounds } from '../store/captureStore.js';
 
 export default function AgentSales() {
-  const { captured } = useCaptures();
-  const base = useMemo(genRows, []);
-  const [extra, setExtra] = useState([]); // captured this session via the inline modal
-  // Real captures made on the Capture Sale screen surface here as line items.
-  const capturedLines = useMemo(() => captured.flatMap(captureToLines), [captured]);
-  const all = useMemo(() => [...capturedLines, ...extra, ...base], [capturedLines, extra, base]);
+  const { agent: me, isVendor } = useAuth();
 
   const [range, setRange] = useState('today'); // today | d7 | mtd
   const [view, setView] = useState('lines'); // lines | agents
-  const [agentF, setAgentF] = useState('all');
+  const [agentF, setAgentF] = useState('all'); // 'all' | agents.id
   const [toast, setToast] = useState('');
   const [capOpen, setCapOpen] = useState(false);
 
-  const maxDay = range === 'today' ? 0 : range === 'd7' ? 6 : 29;
-  const rangeLabel = range === 'today' ? 'Today · 11 Jun' : range === 'd7' ? 'Last 7 days · 5–11 Jun' : 'MTD · 1–11 Jun';
-  let rows = all.filter((r) => r.daysAgo <= maxDay);
-  if (agentF !== 'all') rows = rows.filter((r) => r.agentId === agentF);
+  const [agents, setAgents] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const flash = (m) => {
+    setToast(m);
+    clearTimeout(window.__at);
+    window.__at = setTimeout(() => setToast(''), 2200);
+  };
+
+  useEffect(() => {
+    fetchAgents().then(setAgents).catch(() => setAgents([]));
+  }, [refreshKey]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    const { from, to } = rangeBounds(range);
+    fetchCaptures({ from, to, agentId: agentF === 'all' ? undefined : agentF })
+      .then((r) => { if (active) { setRows(r); setError(''); } })
+      .catch((e) => { if (active) setError(e.message || 'Failed to load captures'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [range, agentF, refreshKey]);
+
+  const rangeLabel = range === 'today' ? 'Today' : range === 'd7' ? 'Last 7 days' : 'Month to date';
 
   const total = rows.reduce((s, r) => s + r.amount, 0);
   const roomRev = rows.filter((r) => r.type === 'Room').reduce((s, r) => s + r.amount, 0);
@@ -63,7 +53,7 @@ export default function AgentSales() {
   const byAgent = useMemo(() => {
     const m = {};
     rows.forEach((r) => {
-      const k = r.agentId;
+      const k = r.agentUuid || r.agentId;
       m[k] = m[k] || { agentId: r.agentId, agent: r.agent, room: 0, other: 0, lines: 0, confs: new Set() };
       m[k].lines++;
       m[k].confs.add(r.conf);
@@ -74,11 +64,6 @@ export default function AgentSales() {
       .sort((a, b) => b.total - a.total);
   }, [rows]);
 
-  const flash = (m) => {
-    setToast(m);
-    clearTimeout(window.__at);
-    window.__at = setTimeout(() => setToast(''), 2200);
-  };
   const exportCsv = () => {
     const head = ['Date', 'Confirmation', 'Agent ID', 'Agent', 'Product', 'Type', 'Qty', 'Unit', 'Amount'];
     const lines = rows.map((r) => [DLABEL(r.daysAgo), r.conf, r.agentId, r.agent, r.product, r.type, r.qty, r.unit, r.amount].join(','));
@@ -99,7 +84,7 @@ export default function AgentSales() {
 
   return (
     <div>
-      <TopBar title="Agent Sales" kicker="Captured upsells · all agents" right={<PropertyChip>Grand Horizon</PropertyChip>} />
+      <TopBar title="Agent Sales" kicker="Captured upsells" right={<PropertyChip>{isVendor ? 'All hotels' : me?.name ? me.name : 'Grand Horizon'}</PropertyChip>} />
 
       <div style={{ maxWidth: 1040, margin: '0 auto', padding: '24px 24px 80px' }}>
         {/* Head + controls */}
@@ -117,7 +102,7 @@ export default function AgentSales() {
 
         {/* KPIs */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
-          <KPI k="Total captured" v={money(total)} sub={rangeLabel.split('·')[0].trim()} accent="var(--teal)" />
+          <KPI k="Total captured" v={money(total)} sub={rangeLabel} accent="var(--teal)" />
           <KPI k="Room upgrades" v={money(roomRev)} sub={rows.filter((r) => r.type === 'Room').length + ' lines'} />
           <KPI k="Other revenue" v={money(otherRev)} sub={rows.filter((r) => r.type === 'Other').length + ' lines'} />
           <KPI k="Bookings · agents" v={confCount + ' · ' + byAgent.length} sub={rows.length + ' total lines'} />
@@ -128,9 +113,15 @@ export default function AgentSales() {
           <Seg opts={[['lines', 'Line items'], ['agents', 'By agent']]} val={view} set={setView} />
           <select value={agentF} onChange={(e) => setAgentF(e.target.value)} style={{ fontSize: 12.5, padding: '7px 10px', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', background: '#fff', marginLeft: 'auto' }}>
             <option value="all">All agents</option>
-            {AGENTS.map((a) => <option key={a[0]} value={a[0]}>{a[1]}</option>)}
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
+
+        {error && (
+          <div style={{ fontSize: 12.5, color: '#991B1B', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r)', padding: '10px 14px', marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
 
         {/* LINE ITEMS */}
         {view === 'lines' && (
@@ -154,11 +145,17 @@ export default function AgentSales() {
                     <td style={{ padding: '9px 13px', textAlign: 'right', fontSize: 13, fontWeight: 600 }} className="mono">{money(r.amount)}</td>
                   </tr>
                 ))}
+                {!loading && rows.length === 0 && (
+                  <tr><td colSpan={8} style={{ padding: '28px 13px', textAlign: 'center', fontSize: 12.5, color: 'var(--faint)' }}>No captures in this range yet.</td></tr>
+                )}
+                {loading && (
+                  <tr><td colSpan={8} style={{ padding: '28px 13px', textAlign: 'center', fontSize: 12.5, color: 'var(--faint)' }}>Loading…</td></tr>
+                )}
               </tbody>
             </table>
             <div style={{ padding: '10px 13px', borderTop: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--faint)' }}>
               <span>Showing {Math.min(40, rows.length)} of {rows.length} lines{rows.length > 40 ? ' · export for all' : ''}</span>
-              <span>Day total · <strong style={{ color: 'var(--ink)' }}>{money(total)}</strong></span>
+              <span>Range total · <strong style={{ color: 'var(--ink)' }}>{money(total)}</strong></span>
             </div>
           </div>
         )}
@@ -174,7 +171,7 @@ export default function AgentSales() {
               </tr></thead>
               <tbody>
                 {byAgent.map((a, i) => (
-                  <tr key={a.agentId} style={{ borderTop: '1px solid var(--line)' }}>
+                  <tr key={a.agentId + i} style={{ borderTop: '1px solid var(--line)' }}>
                     <td style={{ padding: '11px 14px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                         <span style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--sunken)', fontSize: 10, fontWeight: 700, color: 'var(--gray)', display: 'grid', placeItems: 'center' }}>{i + 1}</span>
@@ -202,20 +199,33 @@ export default function AgentSales() {
         )}
       </div>
 
-      {capOpen && <CaptureModal onClose={() => setCapOpen(false)} onSubmit={(lines, msg) => { setExtra((x) => [...lines, ...x]); setCapOpen(false); flash(msg); }} />}
+      {capOpen && (
+        <CaptureModal
+          me={me}
+          isVendor={isVendor}
+          agents={agents}
+          onClose={() => setCapOpen(false)}
+          onDone={(msg) => { setCapOpen(false); setRefreshKey((k) => k + 1); flash(msg); }}
+        />
+      )}
       <Toast prefix="↓">{toast}</Toast>
     </div>
   );
 }
 
-function CaptureModal({ onClose, onSubmit }) {
+function CaptureModal({ me, isVendor, agents, onClose, onDone }) {
+  // Non-vendor agents can only capture as themselves (RLS enforces this too).
+  const selectable = isVendor ? agents : me ? [me] : [];
   const [conf, setConf] = useState('');
-  const [agent, setAgent] = useState(AGENTS[0][0]);
+  const [agentId, setAgentId] = useState(me?.id || selectable[0]?.id || '');
   const [orig, setOrig] = useState('Deluxe King');
   const [up, setUp] = useState('Suite');
   const [nights, setNights] = useState(3);
   const [withRoom, setWithRoom] = useState(true);
   const [extras, setExtras] = useState([]); // [{name,price}]
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
   const delta = Math.max(0, RT_RATE[up] - RT_RATE[orig]);
   const roomAmt = delta * nights;
   const extrasAmt = extras.reduce((s, e) => s + (+e.price || 0), 0);
@@ -223,18 +233,27 @@ function CaptureModal({ onClose, onSubmit }) {
   const addExtra = (name, price) => setExtras((e) => [...e, { name, price }]);
   const setExtra = (i, k, v) => setExtras((e) => e.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const rmExtra = (i) => setExtras((e) => e.filter((_, j) => j !== i));
-  const aName = agentName(agent);
-  const valid = conf.trim() && (withRoom || extras.length) && extras.every((e) => e.name.trim());
+  const selAgent = selectable.find((a) => a.id === agentId);
+  const valid = conf.trim() && selAgent && (withRoom || extras.length) && extras.every((e) => e.name.trim());
   const fld = { fontSize: 13, padding: '8px 10px', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', outline: 'none', width: '100%', background: '#fff' };
   const lab = { fontSize: 10.5, fontWeight: 600, color: 'var(--gray)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 };
 
-  const submit = () => {
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError('');
     const c = conf.trim().toUpperCase();
+    const base = { hotelId: selAgent.hotel_id, agentId: selAgent.id, confirmation: c };
     const lines = [];
-    let id = Date.now();
-    if (withRoom) lines.push({ id: 'x' + id++, daysAgo: 0, conf: c, agentId: agent, agent: aName, product: up + ' upgrade', type: 'Room', qty: nights, unit: delta, amount: roomAmt });
-    extras.forEach((e) => lines.push({ id: 'x' + id++, daysAgo: 0, conf: c, agentId: agent, agent: aName, product: e.name.trim(), type: 'Other', qty: 1, unit: +e.price || 0, amount: +e.price || 0 }));
-    onSubmit(lines, lines.length + ' line' + (lines.length > 1 ? 's' : '') + ' captured · ' + aName);
+    if (withRoom) lines.push({ ...base, product: up + ' upgrade', type: 'Room', qty: nights, unitPrice: delta, amount: roomAmt });
+    extras.forEach((e) => lines.push({ ...base, product: e.name.trim(), type: 'Other', qty: 1, unitPrice: +e.price || 0, amount: +e.price || 0 }));
+    try {
+      await insertCaptures(lines);
+      onDone(lines.length + ' line' + (lines.length > 1 ? 's' : '') + ' captured · ' + (selAgent.name || ''));
+    } catch (e) {
+      setBusy(false);
+      setError(e.message || 'Capture failed.');
+    }
   };
 
   return (
@@ -245,9 +264,19 @@ function CaptureModal({ onClose, onSubmit }) {
           <div style={{ fontSize: 12.5, color: 'var(--gray)', marginTop: 2 }}>Add a room upgrade and/or other revenue · each becomes a line.</div>
         </div>
         <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {!me && !isVendor && (
+            <div style={{ fontSize: 11.5, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--r-sm)', padding: '8px 10px' }}>
+              Your login isn't linked to an agent profile, so captures can't be saved.
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div><span style={lab}>Confirmation #</span><input value={conf} onChange={(e) => setConf(e.target.value)} placeholder="CN-XXXXX" className="mono" style={{ ...fld, textTransform: 'uppercase' }} /></div>
-            <div><span style={lab}>Agent</span><select value={agent} onChange={(e) => setAgent(e.target.value)} style={fld}>{AGENTS.map((a) => <option key={a[0]} value={a[0]}>{a[1]}</option>)}</select></div>
+            <div>
+              <span style={lab}>Agent</span>
+              <select value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!isVendor} style={fld}>
+                {selectable.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Room type */}
@@ -288,11 +317,12 @@ function CaptureModal({ onClose, onSubmit }) {
               </div>
             ))}
           </div>
+          {error && <div style={{ fontSize: 12, color: '#991B1B', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', padding: '8px 10px' }}>{error}</div>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 16, borderTop: '1px solid var(--line)' }}>
           <span style={{ fontSize: 13, color: 'var(--gray)' }}>Total <strong className="mono" style={{ color: 'var(--ink)', fontSize: 15 }}>{money(total)}</strong></span>
           <button onClick={onClose} style={{ marginLeft: 'auto', padding: '10px 16px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 13.5, fontWeight: 500 }}>Cancel</button>
-          <button onClick={submit} disabled={!valid} style={{ padding: '10px 18px', background: valid ? 'var(--teal)' : 'var(--line2)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600, cursor: valid ? 'pointer' : 'not-allowed' }}>Capture sale</button>
+          <button onClick={submit} disabled={!valid || busy} style={{ padding: '10px 18px', background: valid && !busy ? 'var(--teal)' : 'var(--line2)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600, cursor: valid && !busy ? 'pointer' : 'not-allowed' }}>{busy ? 'Saving…' : 'Capture sale'}</button>
         </div>
       </div>
     </div>

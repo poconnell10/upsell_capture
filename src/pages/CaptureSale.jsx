@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TopBar, PropertyChip } from '../components/TopBar.jsx';
 import { Row, Stat, Toast } from '../components/ui.jsx';
-import { ROOMS, PRODUCTS, rateOf, availOf, agentName } from '../data/catalog.js';
+import { ROOMS, PRODUCTS, rateOf, availOf } from '../data/catalog.js';
 import { round5, money } from '../lib/format.js';
 import { useLocalStorage } from '../lib/useLocalStorage.js';
-import { useCaptures } from '../store/captures.jsx';
+import { useAuth } from '../auth/AuthProvider.jsx';
+import { fetchCaptures, insertCaptures, deleteCaptures, groupByConfirmation, rangeBounds } from '../store/captureStore.js';
 
 const lbl = {
   fontSize: 11, fontWeight: 600, color: 'var(--gray)', letterSpacing: '.02em',
@@ -18,21 +19,16 @@ const inp = {
 function Shell({ children }) {
   return (
     <div>
-      <TopBar
-        title="Capture Sale"
-        kicker="Room upgrade · front desk"
-        right={<PropertyChip>Grand Horizon · J. Doe</PropertyChip>}
-      />
+      <TopBar title="Capture Sale" kicker="Room upgrade · front desk" right={<PropertyChip>Front desk</PropertyChip>} />
       {children}
     </div>
   );
 }
 
 export default function CaptureSale() {
-  const { captured, addCapture, voidCapture } = useCaptures();
+  const { agent: me } = useAuth();
 
   const [conf, setConf] = useState('');
-  const [agent, setAgent] = useState('');
   const [orig, setOrig] = useState('');
   const [origRate, setOrigRate] = useState(0);
   const [up, setUp] = useState('');
@@ -41,7 +37,11 @@ export default function CaptureSale() {
   const [extras, setExtras] = useState([]); // [{id,name,price,custom?}]
   const [done, setDone] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [viewSale, setViewSale] = useState(null);
+  const [viewSale, setViewSale] = useState(null); // a confirmation group
+  const [busy, setBusy] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+
+  const [captured, setCaptured] = useState([]); // today's capture line items (UI rows)
   const [drafts, saveDrafts] = useLocalStorage('bm_capture_drafts', []);
   const [toast, setToast] = useState('');
   const flash = (m) => {
@@ -49,6 +49,22 @@ export default function CaptureSale() {
     clearTimeout(window.__ct);
     window.__ct = setTimeout(() => setToast(''), 2200);
   };
+
+  // Load today's captures for this agent.
+  const reload = useCallback(() => {
+    if (!me) {
+      setCaptured([]);
+      return;
+    }
+    const { from } = rangeBounds('today');
+    fetchCaptures({ from, agentId: me.id })
+      .then(setCaptured)
+      .catch(() => setCaptured([]));
+  }, [me]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const groups = useMemo(() => groupByConfirmation(captured), [captured]);
 
   const pickOrig = (t) => { setOrig(t); setOrigRate(rateOf(t)); };
   const pickUp = (t) => { setUp(t); setUpRate(rateOf(t)); };
@@ -70,43 +86,62 @@ export default function CaptureSale() {
   const total = roomTotal + extrasTotal;
 
   const valid =
-    conf.trim() && agent.trim() && orig && up && up !== orig && nights > 0 && extras.every((e) => e.name.trim());
+    Boolean(me) && conf.trim() && orig && up && up !== orig && nights > 0 && extras.every((e) => e.name.trim());
 
-  // Guard signals
+  // Guard signals (against today's loaded captures)
   const dup = conf.trim() && captured.some((c) => c.conf === conf.trim().toUpperCase());
   const upAvail = up ? availOf(up) : 99;
-  const soldSame = up ? captured.filter((c) => c.up === up).length : 0;
+  const soldSame = up ? captured.filter((c) => c.product === up + ' upgrade').length : 0;
   const oversold = up && soldSame >= upAvail;
 
-  const doCapture = () => {
-    const a = agent.trim().toUpperCase();
-    const rec = {
-      ref: 'UPS-' + Math.floor(20000 + Math.random() * 9000),
-      conf: conf.trim().toUpperCase(),
-      agent: a,
-      agentName: agentName(a),
-      orig, up, perNight, nights, roomTotal,
-      extras: [...extras],
-      total,
-    };
-    addCapture(rec);
-    setConfirmOpen(false);
-    setDone(rec);
+  const doCapture = async () => {
+    if (!me || busy) return;
+    setBusy(true);
+    setSubmitError('');
+    const c = conf.trim().toUpperCase();
+    const base = { hotelId: me.hotel_id, agentId: me.id, confirmation: c };
+    const lines = [];
+    if (roomTotal > 0) lines.push({ ...base, product: up + ' upgrade', type: 'Room', qty: nights, unitPrice: perNight, amount: roomTotal });
+    extras.forEach((e) => lines.push({ ...base, product: e.name.trim(), type: 'Other', qty: 1, unitPrice: e.price || 0, amount: e.price || 0 }));
+    try {
+      const inserted = await insertCaptures(lines);
+      setConfirmOpen(false);
+      setDone({
+        ref: inserted[0]?.id ? inserted[0].id.slice(0, 8).toUpperCase() : '—',
+        conf: c,
+        agent: me.agent_code,
+        orig, up, perNight, nights, roomTotal,
+        extras: [...extras],
+        total,
+      });
+      reload();
+    } catch (e) {
+      setSubmitError(e.message || 'Capture failed.');
+    } finally {
+      setBusy(false);
+    }
   };
-  const voidSale = (ref) => {
-    voidCapture(ref);
-    setViewSale(null);
-    flash('Sale voided · reversed in reconciliation');
+
+  const voidGroup = async (group) => {
+    try {
+      await deleteCaptures(group.lines.map((l) => l.id));
+      setViewSale(null);
+      reload();
+      flash('Sale voided · reversed in reconciliation');
+    } catch (e) {
+      flash(e.message || 'Void failed');
+    }
   };
+
   const reset = () => {
-    setConf(''); setAgent(''); setOrig(''); setOrigRate(0); setUp(''); setUpRate(0);
-    setNights(3); setExtras([]); setDone(null); setConfirmOpen(false);
+    setConf(''); setOrig(''); setOrigRate(0); setUp(''); setUpRate(0);
+    setNights(3); setExtras([]); setDone(null); setConfirmOpen(false); setSubmitError('');
   };
   const dirty = conf.trim() || orig || up || extras.length;
   const saveDraft = () => {
     if (!dirty) return;
     const d = {
-      id: 'd' + Date.now(), conf: conf.trim().toUpperCase() || '(no conf)', agent, orig, origRate,
+      id: 'd' + Date.now(), conf: conf.trim().toUpperCase() || '(no conf)', orig, origRate,
       up, upRate, nights, extras: [...extras], total, when: 'Just now',
     };
     saveDrafts((ds) => [d, ...ds]);
@@ -115,7 +150,6 @@ export default function CaptureSale() {
   };
   const resumeDraft = (d) => {
     setConf(d.conf === '(no conf)' ? '' : d.conf);
-    setAgent(d.agent || '');
     setOrig(d.orig); setOrigRate(d.origRate); setUp(d.up); setUpRate(d.upRate);
     setNights(d.nights); setExtras(d.extras || []);
     saveDrafts((ds) => ds.filter((x) => x.id !== d.id));
@@ -160,15 +194,21 @@ export default function CaptureSale() {
             <div style={{ fontSize: 13, color: 'var(--gray)', marginTop: 2 }}>Enter the booking and what was sold. Prices default in — adjust if needed.</div>
           </div>
 
-          {captured.length > 0 && (
+          {!me && (
+            <div style={{ background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--r)', padding: '11px 14px', fontSize: 12.5, color: '#92400E' }}>
+              Your login isn't linked to an agent profile yet, so sales can't be captured. Ask your hotel administrator to add you as an agent.
+            </div>
+          )}
+
+          {groups.length > 0 && (
             <div style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '12px 14px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Today’s captures · {captured.length}</div>
-              {captured.slice(0, 5).map((c) => (
-                <div key={c.ref} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--line)' }}>
-                  <span className="mono" style={{ fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>{c.conf}</span>
-                  <span style={{ fontSize: 11.5, color: 'var(--gray)' }}>{c.orig} → {c.up}{c.extras && c.extras.length ? ' · +' + c.extras.length : ''}</span>
-                  <span className="mono" style={{ fontSize: 12, fontWeight: 600, marginLeft: 'auto' }}>{money(c.total)}</span>
-                  <button onClick={() => setViewSale(c)} style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--line2)', background: '#fff', color: 'var(--ink)' }}>View</button>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Today’s captures · {groups.length}</div>
+              {groups.slice(0, 5).map((g) => (
+                <div key={g.conf} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--line)' }}>
+                  <span className="mono" style={{ fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>{g.conf}</span>
+                  <span style={{ fontSize: 11.5, color: 'var(--gray)' }}>{g.lines.map((l) => l.product).join(' · ')}</span>
+                  <span className="mono" style={{ fontSize: 12, fontWeight: 600, marginLeft: 'auto' }}>{money(g.total)}</span>
+                  <button onClick={() => setViewSale(g)} style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--line2)', background: '#fff', color: 'var(--ink)' }}>View</button>
                 </div>
               ))}
             </div>
@@ -199,8 +239,8 @@ export default function CaptureSale() {
                 <input className="mono" value={conf} onChange={(e) => setConf(e.target.value)} placeholder="CN-XXXXX" style={{ ...inp, textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 600 }} />
               </div>
               <div>
-                <label style={lbl}>Agent ID <span style={{ color: 'var(--faint)', fontWeight: 400 }}>· IN-Gauge / PMS</span></label>
-                <input className="mono" value={agent} onChange={(e) => setAgent(e.target.value)} placeholder="ING-0000 / PMS-0000" style={{ ...inp, textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 600 }} />
+                <label style={lbl}>Agent <span style={{ color: 'var(--faint)', fontWeight: 400 }}>· signed in</span></label>
+                <input className="mono" value={me ? me.agent_code + ' · ' + me.name : '—'} readOnly style={{ ...inp, background: 'var(--sunken)', color: 'var(--gray)', fontWeight: 600 }} />
               </div>
             </div>
           </div>
@@ -286,7 +326,7 @@ export default function CaptureSale() {
             <div style={{ padding: '13px 16px', background: 'var(--teal-bg)', borderBottom: '1px solid var(--teal-line)', fontSize: 13, fontWeight: 600 }}>Sale summary</div>
             <div style={{ padding: '14px 16px' }}>
               <Row k="Confirmation" v={conf.trim() ? <span className="mono" style={{ color: 'var(--teal)' }}>{conf.trim().toUpperCase()}</span> : <span style={{ color: 'var(--faint)' }}>—</span>} />
-              <Row k="Agent ID" v={agent.trim() ? <span className="mono">{agent.trim().toUpperCase()}</span> : <span style={{ color: 'var(--faint)' }}>—</span>} />
+              <Row k="Agent" v={me ? <span className="mono">{me.agent_code}</span> : <span style={{ color: 'var(--faint)' }}>—</span>} />
               <Row k="Upgrade" v={orig && up ? orig + ' → ' + up : <span style={{ color: 'var(--faint)' }}>—</span>} />
               <Row k={'Room · ' + perNight + '/n × ' + nights} v={money(roomTotal)} />
               {extras.map((e) => <Row key={e.id} k={e.name} v={money(e.price)} />)}
@@ -309,16 +349,16 @@ export default function CaptureSale() {
       </div>
 
       {confirmOpen && (
-        <div onClick={() => setConfirmOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,20,25,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 20 }}>
+        <div onClick={() => !busy && setConfirmOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,20,25,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 20 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: 420, background: '#fff', borderRadius: 'var(--r)', boxShadow: '0 16px 48px rgba(0,0,0,.2)', overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--line)' }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>Confirm this sale</div>
               <div style={{ fontSize: 12.5, color: 'var(--gray)', marginTop: 2 }}>Captured against <span className="mono" style={{ color: 'var(--teal)' }}>{conf.trim().toUpperCase()}</span> · booked to PMS / IN-Gauge.</div>
             </div>
             <div style={{ padding: '8px 20px' }}>
-              {dup && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#991B1B', marginBottom: 10, marginTop: 4 }}>⚠ <span><strong>Possible duplicate</strong> — {conf.trim().toUpperCase()} already has a captured sale. Capture again only if this is a separate product.</span></div>}
+              {dup && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#991B1B', marginBottom: 10, marginTop: 4 }}>⚠ <span><strong>Possible duplicate</strong> — {conf.trim().toUpperCase()} already has a captured sale today. Capture again only if this is a separate product.</span></div>}
               {oversold && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#92400E', marginBottom: 10, marginTop: dup ? 0 : 4 }}>⚠ <span><strong>Oversell risk</strong> — {up} shows {upAvail} available and {soldSame} already captured today. Confirm inventory before proceeding.</span></div>}
-              <Row k="Agent" v={<span className="mono">{agent.trim().toUpperCase()}</span>} />
+              <Row k="Agent" v={<span className="mono">{me?.agent_code}</span>} />
               <Row k="Upgrade" v={orig + ' → ' + up} />
               <Row k={'Room · $' + perNight + '/n × ' + nights} v={money(roomTotal)} />
               {extras.map((e) => <Row key={e.id} k={e.name || '(unnamed)'} v={money(e.price)} />)}
@@ -326,10 +366,11 @@ export default function CaptureSale() {
                 <span style={{ fontWeight: 600 }}>Guest pays</span>
                 <span className="mono" style={{ fontWeight: 700, color: 'var(--teal)' }}>{money(total)}</span>
               </div>
+              {submitError && <div style={{ fontSize: 12, color: '#991B1B', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', padding: '8px 10px', marginBottom: 8 }}>{submitError}</div>}
             </div>
             <div style={{ display: 'flex', gap: 10, padding: 16, borderTop: '1px solid var(--line)' }}>
-              <button onClick={() => setConfirmOpen(false)} style={{ flex: '0 0 auto', padding: '11px 18px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 13.5, fontWeight: 500 }}>Back</button>
-              <button onClick={doCapture} style={{ flex: 1, padding: '11px', background: 'var(--teal)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600 }}>✓ Confirm &amp; capture · {money(total)}</button>
+              <button onClick={() => setConfirmOpen(false)} disabled={busy} style={{ flex: '0 0 auto', padding: '11px 18px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 13.5, fontWeight: 500 }}>Back</button>
+              <button onClick={doCapture} disabled={busy} style={{ flex: 1, padding: '11px', background: busy ? 'var(--line2)' : 'var(--teal)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600 }}>{busy ? 'Capturing…' : '✓ Confirm & capture · ' + money(total)}</button>
             </div>
           </div>
         </div>
@@ -341,22 +382,19 @@ export default function CaptureSale() {
             <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>Captured sale</div>
-                <div style={{ fontSize: 12.5, color: 'var(--gray)', marginTop: 2 }}><span className="mono" style={{ color: 'var(--teal)' }}>{viewSale.conf}</span> · <span className="mono">{viewSale.ref}</span></div>
+                <div style={{ fontSize: 12.5, color: 'var(--gray)', marginTop: 2 }}><span className="mono" style={{ color: 'var(--teal)' }}>{viewSale.conf}</span> · {viewSale.agent}</div>
               </div>
               <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--teal)', background: 'var(--teal-bg)', padding: '3px 9px', borderRadius: 10 }}>Submitted</span>
             </div>
             <div style={{ padding: '8px 20px' }}>
-              <Row k="Agent" v={<span className="mono">{viewSale.agent}</span>} />
-              <Row k="Upgrade" v={viewSale.orig + ' → ' + viewSale.up} />
-              <Row k={'Room · $' + viewSale.perNight + '/n × ' + viewSale.nights} v={money(viewSale.roomTotal)} />
-              {viewSale.extras.map((e) => <Row key={e.id} k={e.name || '(unnamed)'} v={money(e.price)} />)}
+              {viewSale.lines.map((l) => <Row key={l.id} k={l.product + (l.type === 'Room' ? ' · $' + l.unit + '/n × ' + l.qty : '')} v={money(l.amount)} />)}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 4px', fontSize: 16 }}>
                 <span style={{ fontWeight: 600 }}>Total</span>
                 <span className="mono" style={{ fontWeight: 700, color: 'var(--teal)' }}>{money(viewSale.total)}</span>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, padding: 16, borderTop: '1px solid var(--line)' }}>
-              <button onClick={() => voidSale(viewSale.ref)} style={{ flex: '0 0 auto', padding: '11px 16px', background: '#fff', border: '1px solid #FCA5A5', color: '#DC2626', borderRadius: 'var(--r-sm)', fontSize: 13.5, fontWeight: 600 }}>Void sale</button>
+              <button onClick={() => voidGroup(viewSale)} style={{ flex: '0 0 auto', padding: '11px 16px', background: '#fff', border: '1px solid #FCA5A5', color: '#DC2626', borderRadius: 'var(--r-sm)', fontSize: 13.5, fontWeight: 600 }}>Void sale</button>
               <button onClick={() => setViewSale(null)} style={{ flex: 1, padding: '11px', background: 'var(--teal)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600 }}>Close</button>
             </div>
           </div>

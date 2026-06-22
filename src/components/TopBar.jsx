@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 
 const NAV = [
   ['Agent Sales', '/'],
@@ -51,17 +52,37 @@ export function TopBar({ title, kicker, right }) {
           </NavLink>
         ))}
       </nav>
-      {right && (
-        <span
-          style={{
-            marginLeft: 'auto', fontSize: 11.5, color: 'var(--gray)',
-            display: 'flex', alignItems: 'center', gap: 7,
-          }}
-        >
-          {right}
-        </span>
-      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+        {right && (
+          <span style={{ fontSize: 11.5, color: 'var(--gray)', display: 'flex', alignItems: 'center', gap: 7 }}>
+            {right}
+          </span>
+        )}
+        <AccountChip />
+      </div>
     </div>
+  );
+}
+
+function AccountChip() {
+  const { user, agent, isVendor, signOut } = useAuth();
+  const navigate = useNavigate();
+  if (!user) return null;
+  const label = agent?.name || user.email;
+  const role = isVendor ? 'Vendor' : agent ? agent.agent_code : 'No agent profile';
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2, alignItems: 'flex-end' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>{label}</span>
+        <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>{role}</span>
+      </span>
+      <button
+        onClick={async () => { await signOut(); navigate('/login', { replace: true }); }}
+        style={{ fontSize: 11.5, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--line2)', background: '#fff', color: 'var(--gray)', fontWeight: 500 }}
+      >
+        Sign out
+      </button>
+    </span>
   );
 }
 
