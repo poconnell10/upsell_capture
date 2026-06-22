@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { TopBar, PropertyChip } from '../../components/TopBar.jsx';
-import { Toast } from '../../components/ui.jsx';
+import { Toast, Modal } from '../../components/ui.jsx';
 import {
-  fetchHotel, fetchHotelAgents, createAgent, setAgentActive, inviteAgent,
+  fetchHotel, fetchHotelAgents, createAgent, setAgentActive, inviteAgent, resetAgentPassword,
 } from '../../store/adminStore.js';
 
 const fld = {
@@ -29,6 +29,29 @@ export default function AdminAgents() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [adding, setAdding] = useState(false);
+
+  // Reset-password modal state
+  const [resetFor, setResetFor] = useState(null); // agent being reset
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState('');
+
+  const openReset = (a) => { setResetFor(a); setNewPw(''); setConfirmPw(''); setResetErr(''); };
+  const pwValid = newPw.length >= 8 && newPw === confirmPw;
+  const submitReset = async () => {
+    if (!pwValid || resetBusy) return;
+    setResetBusy(true);
+    setResetErr('');
+    const res = await resetAgentPassword(resetFor.id, newPw);
+    setResetBusy(false);
+    if (res.ok) {
+      flash('Password updated for ' + resetFor.name);
+      setResetFor(null);
+    } else {
+      setResetErr(res.error || 'Reset failed.');
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -150,6 +173,7 @@ export default function AdminAgents() {
                   </td>
                   <td style={{ padding: '11px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button onClick={() => resend(a)} style={{ fontSize: 11.5, color: 'var(--gray)', background: 'none', border: 'none', marginRight: 12 }}>Resend invite</button>
+                    <button onClick={() => openReset(a)} style={{ fontSize: 11.5, color: 'var(--gray)', background: 'none', border: 'none', marginRight: 12 }}>Reset password</button>
                     <button onClick={() => toggleActive(a)} style={{ fontSize: 11.5, color: a.active ? '#DC2626' : 'var(--teal)', background: 'none', border: 'none' }}>{a.active ? 'Deactivate' : 'Activate'}</button>
                   </td>
                 </tr>
@@ -160,6 +184,33 @@ export default function AdminAgents() {
           </table>
         </div>
       </div>
+
+      {resetFor && (
+        <Modal onClose={() => !resetBusy && setResetFor(null)}>
+          <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--line)' }}>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>Reset password</div>
+            <div style={{ fontSize: 12.5, color: 'var(--gray)', marginTop: 2 }}>
+              Set a new password for <strong>{resetFor.name}</strong> · <span className="mono">{resetFor.email}</span>
+            </div>
+          </div>
+          <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <span style={lab}>New password</span>
+              <input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="At least 8 characters" style={fld} />
+            </div>
+            <div>
+              <span style={lab}>Confirm password</span>
+              <input type="password" autoComplete="new-password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter password" style={{ ...fld, border: '1px solid ' + (confirmPw && confirmPw !== newPw ? '#FCA5A5' : 'var(--line2)') }} />
+            </div>
+            {confirmPw && confirmPw !== newPw && <div style={{ fontSize: 11.5, color: '#DC2626' }}>Passwords don't match.</div>}
+            {resetErr && <div style={{ fontSize: 12, color: '#991B1B', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', padding: '8px 10px' }}>{resetErr}</div>}
+          </div>
+          <div style={{ display: 'flex', gap: 10, padding: 16, borderTop: '1px solid var(--line)' }}>
+            <button onClick={() => setResetFor(null)} disabled={resetBusy} style={{ marginLeft: 'auto', padding: '10px 16px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 13.5, fontWeight: 500 }}>Cancel</button>
+            <button onClick={submitReset} disabled={!pwValid || resetBusy} style={{ padding: '10px 18px', background: pwValid && !resetBusy ? 'var(--teal)' : 'var(--line2)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600, cursor: pwValid && !resetBusy ? 'pointer' : 'not-allowed' }}>{resetBusy ? 'Updating…' : 'Update password'}</button>
+          </div>
+        </Modal>
+      )}
 
       <Toast>{toast}</Toast>
     </div>

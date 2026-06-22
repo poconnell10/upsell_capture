@@ -65,22 +65,26 @@ Postgres + Auth + Row Level Security. Tables: `hotels`, `agents`, `captures`
 Gated to vendor admins (`RequireVendor`); everyone else is redirected to `/`.
 Manage hotels (add / inline-edit / deactivate) and their agents
 (`/admin/hotels/:hotelId`). Adding an agent inserts the `agents` row and sends a
-password-setup invite.
+password-setup invite; admins can also **reset an agent's password** directly.
 
-> **Security:** the invite uses `auth.admin.inviteUserByEmail`, which requires the
-> **service-role key** and must never run in the browser. It lives in the
-> `invite-agent` edge function (service role stays server-side; the function
-> verifies the caller is a vendor admin). Deploy it with:
+> **Security:** the `auth.admin.*` calls require the **service-role key** and must
+> never run in the browser. They live in edge functions (service role stays
+> server-side; each verifies the caller is a vendor admin):
+>
+> - `invite-agent` — `inviteUserByEmail` (email invite)
+> - `reset-agent-password` — `updateUserById` (set a password directly)
 >
 > ```bash
 > supabase functions deploy invite-agent
+> supabase functions deploy reset-agent-password
+> supabase secrets set SERVICE_ROLE_KEY=<your-service-role-key>
 > ```
 
 ### One-time setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/0001_init.sql` then `0002_admin.sql` in the SQL editor
-   (or `supabase db push`).
+2. Run `supabase/migrations/0001_init.sql`, `0002_admin.sql`, then `0003_reset_password.sql`
+   in the SQL editor (or `supabase db push`).
 3. Optionally run `supabase/seed.sql` for demo hotels.
 4. Add vendor emails to `vendor_admins`, sign in, and provision hotels/agents from
    `/admin`. (Or seed `agents` rows manually — email must match the auth user.)
