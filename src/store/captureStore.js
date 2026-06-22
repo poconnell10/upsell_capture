@@ -63,6 +63,10 @@ export async function insertCaptures(lines) {
   }));
   const { data, error } = await supabase.from('captures').insert(payload).select(SELECT);
   if (error) throw error;
+  // Fire outbound webhooks (global + hotel) — fire-and-forget, never block the UI.
+  for (const c of data) {
+    supabase.functions.invoke('capture-webhook', { body: { capture_id: c.id } }).catch(() => {});
+  }
   return data.map(toRow);
 }
 

@@ -32,3 +32,11 @@ select{
 }
 .bm-sel:hover{ border-color:var(--gray); }
 .bm-sel:focus{ border-color:var(--teal); box-shadow:0 0 0 3px var(--teal-bg); }
+
+/* Docs page: two-column layout with a sticky sidebar that collapses on mobile */
+.docs-layout{ display:grid; grid-template-columns:212px 1fr; gap:30px; align-items:start; }
+.docs-sidebar{ position:sticky; top:78px; }
+@media (max-width:760px){
+  .docs-layout{ grid-template-columns:1fr; gap:16px; }
+  .docs-sidebar{ position:static; top:auto; }
+}

@@ -5,12 +5,15 @@ import { useAuth } from '../auth/AuthProvider';
 const NAV = [
   ['Agent Sales', '/'],
   ['Capture Sale', '/capture'],
+  ['Integrations', '/integrations'],
 ];
 // Links only vendor admins see.
 const VENDOR_NAV = [
   ['Rooms & Rates', '/rooms'],
   ['Other Revenue', '/other'],
+  ['Webhooks', '/admin/webhooks'],
   ['Admin', '/admin'],
+  ['Docs', '/admin/docs'],
 ];
 
 // Shared top bar + primary nav. `right` renders the property / user chip per page.
@@ -43,7 +46,7 @@ export function TopBar({ title, kicker, right }) {
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={to === '/' || to === '/admin'}
             style={({ isActive }) => ({
               fontSize: 12,
               textDecoration: 'none',
