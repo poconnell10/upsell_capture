@@ -111,13 +111,32 @@ export function setAgentActive(id, active) {
     });
 }
 
-// Send a password-setup invite via the edge function (service role, server-side).
-// Returns { ok, error } — a failed invite does not undo agent creation.
-export async function inviteAgent(email, redirectTo) {
-  const { data, error } = await supabase.functions.invoke('invite-agent', {
-    body: { email, redirectTo },
-  });
-  if (error) return { ok: false, error: error.message };
+// Invoke an edge function and normalise the result to { ok, error }. A non-2xx
+// response surfaces as a FunctionsHttpError whose body holds our JSON error.
+async function invokeFunction(name, body) {
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) {
+    let message = error.message;
+    try {
+      const parsed = await error.context?.json?.();
+      if (parsed?.error) message = parsed.error;
+    } catch {
+      /* keep the generic message */
+    }
+    return { ok: false, error: message };
+  }
   if (data?.error) return { ok: false, error: data.error };
   return { ok: true };
+}
+
+// Send a password-setup invite via the edge function (service role, server-side).
+// Returns { ok, error } — a failed invite does not undo agent creation.
+export function inviteAgent(email, redirectTo) {
+  return invokeFunction('invite-agent', { email, redirectTo });
+}
+
+// Vendor admin sets an agent's password directly (no email). Server-side edge
+// function, service role only. Returns { ok, error }.
+export function resetAgentPassword(agentId, newPassword) {
+  return invokeFunction('reset-agent-password', { agent_id: agentId, new_password: newPassword });
 }
