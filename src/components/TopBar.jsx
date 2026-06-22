@@ -10,6 +10,7 @@ const NAV = [
 
 // Shared top bar + primary nav. `right` renders the property / user chip per page.
 export function TopBar({ title, kicker, right }) {
+  const { isVendor } = useAuth();
   return (
     <div
       style={{
@@ -33,7 +34,7 @@ export function TopBar({ title, kicker, right }) {
       <span style={{ fontSize: 15, fontWeight: 600 }}>{title}</span>
       {kicker && <span style={{ fontSize: 11.5, color: 'var(--faint)' }}>{kicker}</span>}
       <nav style={{ display: 'flex', gap: 2, marginLeft: 16 }}>
-        {NAV.map(([label, to]) => (
+        {[...NAV, ...(isVendor ? [['Admin', '/admin']] : [])].map(([label, to]) => (
           <NavLink
             key={to}
             to={to}

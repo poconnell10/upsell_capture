@@ -35,10 +35,14 @@ src/
   store/captureStore.js  real Supabase queries: fetch / insert / delete captures
   auth/                  AuthProvider, RequireAuth route guard
   components/            TopBar (nav + account) + small UI primitives
-  pages/                 one file per screen + Login
+  pages/                 one file per screen + Login + admin/
+  store/adminStore.js    vendor-admin queries (hotels, agents, invite)
+  auth/                  AuthProvider, RequireAuth, RequireVendor
   App.jsx, main.jsx      router + entry
 supabase/
   migrations/0001_init.sql  schema + RLS policies
+  migrations/0002_admin.sql soft-delete + vendor management policies
+  functions/invite-agent/   edge function: server-side agent invite
   seed.sql                  demo hotels + linking instructions
 ```
 
@@ -52,15 +56,36 @@ Postgres + Auth + Row Level Security. Tables: `hotels`, `agents`, `captures`
   `vendor_admins` get cross-hotel (vendor) read access for reconciliation.
 - Policies use `SECURITY DEFINER` helpers (`is_vendor()`, `current_hotel_id()`)
   so they don't recurse into the tables they protect.
+- **Soft delete.** `hotels.active` / `agents.active` flags; select policies hide
+  inactive rows from agents (vendors still see them). A deactivated agent is
+  fully locked out — `current_hotel_id()` only resolves for active agents.
+
+### Vendor admin panel (`/admin`)
+
+Gated to vendor admins (`RequireVendor`); everyone else is redirected to `/`.
+Manage hotels (add / inline-edit / deactivate) and their agents
+(`/admin/hotels/:hotelId`). Adding an agent inserts the `agents` row and sends a
+password-setup invite.
+
+> **Security:** the invite uses `auth.admin.inviteUserByEmail`, which requires the
+> **service-role key** and must never run in the browser. It lives in the
+> `invite-agent` edge function (service role stays server-side; the function
+> verifies the caller is a vendor admin). Deploy it with:
+>
+> ```bash
+> supabase functions deploy invite-agent
+> ```
 
 ### One-time setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/0001_init.sql` in the SQL editor (or `supabase db push`).
+2. Run `supabase/migrations/0001_init.sql` then `0002_admin.sql` in the SQL editor
+   (or `supabase db push`).
 3. Optionally run `supabase/seed.sql` for demo hotels.
-4. Create agent users in **Auth → Users**, then insert matching `agents` rows
-   (email must match). Add vendor emails to `vendor_admins`.
-5. Copy `.env.example` → `.env` and set `VITE_SUPABASE_URL` /
+4. Add vendor emails to `vendor_admins`, sign in, and provision hotels/agents from
+   `/admin`. (Or seed `agents` rows manually — email must match the auth user.)
+5. Deploy the invite function: `supabase functions deploy invite-agent`.
+6. Copy `.env.example` → `.env` and set `VITE_SUPABASE_URL` /
    `VITE_SUPABASE_ANON_KEY`. **Credentials come from env only — never hardcoded.**
 
 ## Develop
