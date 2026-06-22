@@ -5,8 +5,9 @@
 // RPC) before the privileged auth.admin.inviteUserByEmail() call is made.
 //
 // Deploy:  supabase functions deploy invite-agent
-// (SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY are injected
-//  automatically by the Supabase Functions runtime.)
+// SUPABASE_URL / SUPABASE_ANON_KEY are injected automatically by the runtime.
+// SERVICE_ROLE_KEY must be set as a secret (the SUPABASE_ prefix is reserved):
+//   supabase secrets set SERVICE_ROLE_KEY=<your-service-role-key>
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -29,7 +30,7 @@ Deno.serve(async (req) => {
 
   const url = Deno.env.get('SUPABASE_URL');
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const serviceKey = Deno.env.get('SERVICE_ROLE_KEY');
   if (!url || !anonKey || !serviceKey) {
     return json(500, { error: 'Function is missing Supabase environment configuration.' });
   }
