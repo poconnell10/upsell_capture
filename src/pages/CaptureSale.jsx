@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TopBar, PropertyChip } from '../components/TopBar.jsx';
 import { Row, Stat, Toast, Toggle } from '../components/ui.jsx';
-import { ROOMS, PRODUCTS, rateOf, availOf } from '../data/catalog.js';
+import { ROOMS, PRODUCTS, rateOf, availOf, RANK_BY_TYPE } from '../data/catalog.js';
 import { round5, money } from '../lib/format.js';
 import { useLocalStorage } from '../lib/useLocalStorage.js';
 import { useAuth } from '../auth/AuthProvider.jsx';
 import { fetchCaptures, insertCaptures, deleteCaptures, groupByConfirmation, rangeBounds } from '../store/captureStore.js';
+import { fetchRoomRanks } from '../store/roomStore.js';
 
 const lbl = {
   fontSize: 11, fontWeight: 600, color: 'var(--gray)', letterSpacing: '.02em',
@@ -44,6 +45,7 @@ export default function CaptureSale() {
   const [submitError, setSubmitError] = useState('');
 
   const [captured, setCaptured] = useState([]); // today's capture line items (UI rows)
+  const [rankByType, setRankByType] = useState(RANK_BY_TYPE); // upgrade hierarchy (DB-overridable)
   const [drafts, saveDrafts] = useLocalStorage('bm_capture_drafts', []);
   const [toast, setToast] = useState('');
   const flash = (m) => {
@@ -66,9 +68,28 @@ export default function CaptureSale() {
 
   useEffect(() => { reload(); }, [reload]);
 
+  // Load upgrade ranks (falls back to the static catalog rank).
+  useEffect(() => {
+    fetchRoomRanks()
+      .then((ranks) => {
+        if (ranks && ranks.length) setRankByType(Object.fromEntries(ranks.map((r) => [r.type, r.rank])));
+      })
+      .catch(() => {});
+  }, []);
+
   const groups = useMemo(() => groupByConfirmation(captured), [captured]);
 
-  const pickOrig = (t) => { setOrig(t); setOrigRate(rateOf(t)); };
+  const rankOf = (type) => rankByType[type] ?? 999;
+  // Valid upgrades = rooms ranked strictly above the booked room.
+  const upOptions = orig ? ROOMS.filter((r) => rankOf(r.type) > rankOf(orig)) : ROOMS;
+  const noUpgrades = Boolean(orig) && upOptions.length === 0;
+
+  const pickOrig = (t) => {
+    setOrig(t);
+    setOrigRate(rateOf(t));
+    // Clear an upgrade selection that's no longer a valid (higher-ranked) upgrade.
+    if (up && rankOf(up) <= rankOf(t)) { setUp(''); setUpRate(0); }
+  };
   const pickUp = (t) => { setUp(t); setUpRate(rateOf(t)); };
   const addExtra = (id) => {
     const p = PRODUCTS.find((x) => x.id === id);
@@ -100,8 +121,9 @@ export default function CaptureSale() {
   const total = roomTotal + extrasTotal;
 
   // Validation (surfaced on submit attempt, not per keystroke)
+  // Same-room is kept as a belt-and-braces safety net; the rank-filtered
+  // "Upgrade to" dropdown should make it (and any downgrade) impossible.
   const sameRoom = !otherOnly && Boolean(up) && up === orig;
-  const downgrade = !otherOnly && Boolean(orig) && Boolean(up) && rawDelta < 0;
   const nightsBad = !otherOnly && (nights < 1 || nights > 40);
   const roomsMissing = !otherOnly && (!orig || !up);
   const voucherBad = extras.some(
@@ -112,7 +134,7 @@ export default function CaptureSale() {
 
   const valid =
     Boolean(me) && conf.trim() && extrasNamed && !voucherBad && !noExtrasWhenOther &&
-    (otherOnly || (!roomsMissing && !sameRoom && !downgrade && !nightsBad));
+    (otherOnly || (!roomsMissing && !sameRoom && !nightsBad));
 
   const trySubmit = () => {
     if (!valid) { setShowErrors(true); return; }
@@ -310,10 +332,16 @@ export default function CaptureSale() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10 }}>
               <div>
                 <label style={lbl}>Upgrade to</label>
-                <select value={up} onChange={(e) => pickUp(e.target.value)} style={{ ...inp, borderColor: showErrors && (sameRoom || downgrade) ? '#DC2626' : 'var(--line2)' }}>
-                  <option value="">Select…</option>
-                  {ROOMS.map((r) => <option key={r.type} value={r.type}>{r.type}</option>)}
-                </select>
+                {noUpgrades ? (
+                  <select value="" disabled style={{ ...inp, color: 'var(--faint)', background: 'var(--sunken)' }}>
+                    <option value="">No upgrades available for this room type</option>
+                  </select>
+                ) : (
+                  <select value={up} onChange={(e) => pickUp(e.target.value)} style={{ ...inp, borderColor: showErrors && sameRoom ? '#DC2626' : 'var(--line2)' }}>
+                    <option value="">Select…</option>
+                    {upOptions.map((r) => <option key={r.type} value={r.type}>{r.type}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label style={lbl}>Rate / night</label>
@@ -324,7 +352,6 @@ export default function CaptureSale() {
               </div>
             </div>
             {showErrors && sameRoom && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Upgraded room is the same as the booked room. Enable “Other Revenue Only” if this entry has no room upgrade.</div>}
-            {showErrors && downgrade && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>A room downgrade cannot be recorded as an upsell. Please check the room selection.</div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--gray)' }}>
                 Nights

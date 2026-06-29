@@ -98,7 +98,8 @@ read-only view of their hotel webhook (and a "Test" button) under
 
 1. Create a Supabase project.
 2. Run the migrations in order (SQL editor or `supabase db push`):
-   `0001_init.sql`, `0002_admin.sql`, `0003_agent_auth_uid.sql`, `0004_webhooks.sql`.
+   `0001_init.sql`, `0002_admin.sql`, `0003_agent_auth_uid.sql`, `0004_webhooks.sql`,
+   `0005_room_rank.sql`.
 3. Optionally run `supabase/seed.sql` for demo hotels.
 4. Add vendor emails to `vendor_admins`, sign in, and provision hotels/agents from
    `/admin`. (Or seed `agents` rows manually — email must match the auth user.)
