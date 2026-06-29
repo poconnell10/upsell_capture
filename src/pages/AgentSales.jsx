@@ -69,27 +69,23 @@ export default function AgentSales() {
     const x = new Date(d);
     return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
   };
-  const csvCell = (v) => {
-    const s = String(v ?? '');
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
 
-  const exportCsv = () => {
+  const exportXlsx = async () => {
     const head = ['Date', 'Confirmation', 'Product', 'Type', 'Qty', 'Unit Price', 'Amount'];
-    const lines = rows.map((r) =>
-      [ymd(r.capturedAt), r.conf, r.product, r.type, r.qty, r.unit, r.amount].map(csvCell).join(','),
-    );
-    const csv = [head.join(','), ...lines].join('\n');
+    const data = rows.map((r) => [ymd(r.capturedAt), r.conf, r.product, r.type, r.qty, r.unit, r.amount]);
     try {
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `upsell-capture-${range}-${ymd(new Date())}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const XLSX = await import('xlsx'); // lazy-loaded so it doesn't bloat initial page load
+      const ws = XLSX.utils.aoa_to_sheet([head, ...data]);
+      // Auto-fit each column to the widest cell (incl. header), with a little padding.
+      ws['!cols'] = head.map((h, i) => ({
+        wch: Math.max(h.length, ...data.map((row) => String(row[i] ?? '').length)) + 2,
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Captures');
+      XLSX.writeFile(wb, `upsell-capture-${range}-${ymd(new Date())}.xlsx`);
     } catch (e) {
-      /* ignore */
+      flash('Export failed');
+      return;
     }
     flash(rows.length + ' rows exported · ' + rangeLabel);
   };
@@ -108,7 +104,7 @@ export default function AgentSales() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <Seg opts={[['today', 'Today'], ['mtd', 'MTD'], ['all', 'All']]} val={range} set={setRange} />
             <button onClick={() => setCapOpen(true)} style={{ padding: '7px 13px', background: 'var(--teal)', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 12.5, fontWeight: 600, color: '#fff' }}>+ Capture sale</button>
-            <button onClick={exportCsv} style={{ padding: '7px 13px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6 }}>↓ Export CSV</button>
+            <button onClick={exportXlsx} style={{ padding: '7px 13px', background: '#fff', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6 }}>↓ Export Excel</button>
           </div>
         </div>
 

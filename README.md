@@ -9,7 +9,7 @@ Built from the four interactive prototypes as a single **Vite + React** app.
 
 | Route      | Screen          | What it does |
 |------------|-----------------|--------------|
-| `/`        | **Agent Sales** | Dashboard of captured upsells — line items, per-agent rollup, KPIs, CSV export, quick-capture modal. |
+| `/`        | **Agent Sales** | Dashboard of captured upsells — line items, per-agent rollup, KPIs, Excel (.xlsx) export, quick-capture modal. |
 | `/capture` | **Capture Sale**| The core flow: confirmation + agent, room upgrade (rate delta × nights), other-revenue add-ons, drafts, duplicate/oversell guards, confirm & capture. |
 | `/rooms`   | **Rooms & Rates**| Base room products with brand-inherit / property-override, inline rate edit, availability (no-oversell) and rate plans. |
 | `/other`   | **Other Revenue**| Per-product tax (exclusive/inclusive) and property fees, with a live worked-example calculator. |
@@ -98,7 +98,8 @@ read-only view of their hotel webhook (and a "Test" button) under
 
 1. Create a Supabase project.
 2. Run the migrations in order (SQL editor or `supabase db push`):
-   `0001_init.sql`, `0002_admin.sql`, `0003_agent_auth_uid.sql`, `0004_webhooks.sql`.
+   `0001_init.sql`, `0002_admin.sql`, `0003_agent_auth_uid.sql`, `0004_webhooks.sql`,
+   `0005_room_rank.sql`.
 3. Optionally run `supabase/seed.sql` for demo hotels.
 4. Add vendor emails to `vendor_admins`, sign in, and provision hotels/agents from
    `/admin`. (Or seed `agents` rows manually — email must match the auth user.)

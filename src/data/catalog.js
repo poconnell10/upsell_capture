@@ -5,16 +5,19 @@
 // Brand-level room master (inherited by each property). Availability tonight is
 // derived from `total - sold` so the no-oversell guard has one number to trust.
 export const ROOMS = [
-  { id: 'std-k', type: 'Standard King',    bed: 'King',    occ: 2, rate: 120, total: 40, sold: 23, sellable: true },
-  { id: 'dlx-k', type: 'Deluxe King',      bed: 'King',    occ: 2, rate: 160, total: 24, sold: 13, sellable: true },
-  { id: 'exec',  type: 'Executive Room',   bed: 'King',    occ: 2, rate: 210, total: 18, sold: 9,  sellable: true },
-  { id: 'dvr',   type: 'Disney View Room', bed: '2 Queen', occ: 4, rate: 240, total: 12, sold: 8,  sellable: true },
-  { id: 'corn',  type: 'Corner Room',      bed: 'King',    occ: 3, rate: 195, total: 8,  sold: 2,  sellable: true },
-  { id: 'suite', type: 'Suite',            bed: 'King',    occ: 3, rate: 320, total: 10, sold: 4,  sellable: true },
+  { id: 'std-k', type: 'Standard King',    bed: 'King',    occ: 2, rate: 120, total: 40, sold: 23, sellable: true, rank: 1 },
+  { id: 'dlx-k', type: 'Deluxe King',      bed: 'King',    occ: 2, rate: 160, total: 24, sold: 13, sellable: true, rank: 2 },
+  { id: 'exec',  type: 'Executive Room',   bed: 'King',    occ: 2, rate: 210, total: 18, sold: 9,  sellable: true, rank: 3 },
+  { id: 'dvr',   type: 'Disney View Room', bed: '2 Queen', occ: 4, rate: 240, total: 12, sold: 8,  sellable: true, rank: 4 },
+  { id: 'corn',  type: 'Corner Room',      bed: 'King',    occ: 3, rate: 195, total: 8,  sold: 2,  sellable: true, rank: 5 },
+  { id: 'suite', type: 'Suite',            bed: 'King',    occ: 3, rate: 320, total: 10, sold: 4,  sellable: true, rank: 6 },
 ];
 
 export const ROOM_TYPES = ROOMS.map((r) => r.type);
 export const RT_RATE = Object.fromEntries(ROOMS.map((r) => [r.type, r.rate]));
+// Upgrade hierarchy: a higher rank is a higher room tier. Default = display order;
+// overridable via the room_types table (Rooms & Rates drag-to-reorder).
+export const RANK_BY_TYPE = Object.fromEntries(ROOMS.map((r) => [r.type, r.rank]));
 
 export const rateOf = (type) => (ROOMS.find((r) => r.type === type) || {}).rate || 0;
 export const availOf = (type) => {
@@ -26,6 +29,8 @@ export const availOf = (type) => {
 export const PRODUCTS = [
   { id: 'early', name: 'Early arrival', price: 35 },
   { id: 'late',  name: 'Late checkout', price: 40 },
+  // `voucher: true` → quantity is nights × vouchers-per-night, priced per voucher.
+  { id: 'breakfast', name: 'Breakfast voucher', price: 25, voucher: true },
 ];
 export const OTHER_CATALOG = [
   ['Early arrival', 35],

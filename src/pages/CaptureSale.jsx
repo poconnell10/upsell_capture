@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TopBar, PropertyChip } from '../components/TopBar.jsx';
-import { Row, Stat, Toast } from '../components/ui.jsx';
-import { ROOMS, PRODUCTS, rateOf, availOf } from '../data/catalog.js';
+import { Row, Stat, Toast, Toggle } from '../components/ui.jsx';
+import { ROOMS, PRODUCTS, rateOf, availOf, RANK_BY_TYPE } from '../data/catalog.js';
 import { round5, money } from '../lib/format.js';
 import { useLocalStorage } from '../lib/useLocalStorage.js';
 import { useAuth } from '../auth/AuthProvider.jsx';
 import { fetchCaptures, insertCaptures, deleteCaptures, groupByConfirmation, rangeBounds } from '../store/captureStore.js';
+import { fetchRoomRanks } from '../store/roomStore.js';
 
 const lbl = {
   fontSize: 11, fontWeight: 600, color: 'var(--gray)', letterSpacing: '.02em',
@@ -34,7 +35,9 @@ export default function CaptureSale() {
   const [up, setUp] = useState('');
   const [upRate, setUpRate] = useState(0);
   const [nights, setNights] = useState(3);
-  const [extras, setExtras] = useState([]); // [{id,name,price,custom?}]
+  const [extras, setExtras] = useState([]); // [{id,name,price,custom?}] or voucher: {id,name,voucher,unit,vnights,vper}
+  const [otherOnly, setOtherOnly] = useState(false); // "Other Revenue Only" — no room upgrade
+  const [showErrors, setShowErrors] = useState(false); // validations surface on submit attempt
   const [done, setDone] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [viewSale, setViewSale] = useState(null); // a confirmation group
@@ -42,6 +45,7 @@ export default function CaptureSale() {
   const [submitError, setSubmitError] = useState('');
 
   const [captured, setCaptured] = useState([]); // today's capture line items (UI rows)
+  const [rankByType, setRankByType] = useState(RANK_BY_TYPE); // upgrade hierarchy (DB-overridable)
   const [drafts, saveDrafts] = useLocalStorage('bm_capture_drafts', []);
   const [toast, setToast] = useState('');
   const flash = (m) => {
@@ -64,29 +68,79 @@ export default function CaptureSale() {
 
   useEffect(() => { reload(); }, [reload]);
 
+  // Load upgrade ranks (falls back to the static catalog rank).
+  useEffect(() => {
+    fetchRoomRanks()
+      .then((ranks) => {
+        if (ranks && ranks.length) setRankByType(Object.fromEntries(ranks.map((r) => [r.type, r.rank])));
+      })
+      .catch(() => {});
+  }, []);
+
   const groups = useMemo(() => groupByConfirmation(captured), [captured]);
 
-  const pickOrig = (t) => { setOrig(t); setOrigRate(rateOf(t)); };
+  const rankOf = (type) => rankByType[type] ?? 999;
+  // Valid upgrades = rooms ranked strictly above the booked room.
+  const upOptions = orig ? ROOMS.filter((r) => rankOf(r.type) > rankOf(orig)) : ROOMS;
+  const noUpgrades = Boolean(orig) && upOptions.length === 0;
+
+  const pickOrig = (t) => {
+    setOrig(t);
+    setOrigRate(rateOf(t));
+    // Clear an upgrade selection that's no longer a valid (higher-ranked) upgrade.
+    if (up && rankOf(up) <= rankOf(t)) { setUp(''); setUpRate(0); }
+  };
   const pickUp = (t) => { setUp(t); setUpRate(rateOf(t)); };
   const addExtra = (id) => {
     const p = PRODUCTS.find((x) => x.id === id);
     if (!p) return;
     if (extras.some((e) => e.id === id)) return;
-    setExtras((e) => [...e, { ...p }]);
+    // Vouchers carry a per-voucher unit price + nights × per-night quantity.
+    const item = p.voucher
+      ? { id: p.id, name: p.name, voucher: true, unit: p.price, vnights: 1, vper: 1 }
+      : { ...p };
+    setExtras((e) => [...e, item]);
   };
   const addCustom = () => setExtras((e) => [...e, { id: 'c' + Date.now(), name: '', price: 0, custom: true }]);
   const setExtraName = (id, v) => setExtras((e) => e.map((x) => (x.id === id ? { ...x, name: v } : x)));
   const setExtraPrice = (id, v) =>
     setExtras((e) => e.map((x) => (x.id === id ? { ...x, price: round5(parseInt(v, 10) || 0) } : x)));
+  const setVoucherField = (id, field, v) =>
+    setExtras((e) => e.map((x) => (x.id === id ? { ...x, [field]: v } : x)));
   const removeExtra = (id) => setExtras((e) => e.filter((x) => x.id !== id));
 
-  const perNight = Math.max(0, upRate - origRate); // upgrade delta / night
-  const roomTotal = perNight * nights;
-  const extrasTotal = extras.reduce((s, e) => s + (e.price || 0), 0);
+  // Quantity / unit / amount for an extra (vouchers compute qty from nights × per-night).
+  const extraQty = (e) => (e.voucher ? Math.max(0, (e.vnights || 0) * (e.vper || 0)) : 1);
+  const extraUnit = (e) => (e.voucher ? e.unit || 0 : e.price || 0);
+  const extraAmount = (e) => extraQty(e) * extraUnit(e);
+
+  const rawDelta = upRate - origRate; // can be negative (downgrade)
+  const perNight = Math.max(0, rawDelta); // upgrade delta / night, clamped at 0 for display
+  const roomTotal = otherOnly ? 0 : perNight * nights;
+  const extrasTotal = extras.reduce((s, e) => s + extraAmount(e), 0);
   const total = roomTotal + extrasTotal;
 
+  // Validation (surfaced on submit attempt, not per keystroke)
+  // Same-room is kept as a belt-and-braces safety net; the rank-filtered
+  // "Upgrade to" dropdown should make it (and any downgrade) impossible.
+  const sameRoom = !otherOnly && Boolean(up) && up === orig;
+  const nightsBad = !otherOnly && (nights < 1 || nights > 40);
+  const roomsMissing = !otherOnly && (!orig || !up);
+  const voucherBad = extras.some(
+    (e) => e.voucher && ((e.vnights || 0) < 1 || (e.vnights || 0) > 40 || (e.vper || 0) < 1),
+  );
+  const noExtrasWhenOther = otherOnly && extras.length === 0;
+  const extrasNamed = extras.every((e) => (e.name || '').trim());
+
   const valid =
-    Boolean(me) && conf.trim() && orig && up && up !== orig && nights > 0 && extras.every((e) => e.name.trim());
+    Boolean(me) && conf.trim() && extrasNamed && !voucherBad && !noExtrasWhenOther &&
+    (otherOnly || (!roomsMissing && !sameRoom && !nightsBad));
+
+  const trySubmit = () => {
+    if (!valid) { setShowErrors(true); return; }
+    setShowErrors(false);
+    setConfirmOpen(true);
+  };
 
   // Guard signals (against today's loaded captures)
   const dup = conf.trim() && captured.some((c) => c.conf === conf.trim().toUpperCase());
@@ -101,8 +155,8 @@ export default function CaptureSale() {
     const c = conf.trim().toUpperCase();
     const base = { hotelId: me.hotel_id, agentId: me.id, confirmation: c };
     const lines = [];
-    if (roomTotal > 0) lines.push({ ...base, product: up + ' upgrade', type: 'Room', qty: nights, unitPrice: perNight, amount: roomTotal });
-    extras.forEach((e) => lines.push({ ...base, product: e.name.trim(), type: 'Other', qty: 1, unitPrice: e.price || 0, amount: e.price || 0 }));
+    if (!otherOnly && roomTotal > 0) lines.push({ ...base, product: up + ' upgrade', type: 'Room', qty: nights, unitPrice: perNight, amount: roomTotal });
+    extras.forEach((e) => lines.push({ ...base, product: (e.name || '').trim(), type: 'Other', qty: extraQty(e), unitPrice: extraUnit(e), amount: extraAmount(e) }));
     try {
       const inserted = await insertCaptures(lines);
       setConfirmOpen(false);
@@ -110,8 +164,8 @@ export default function CaptureSale() {
         ref: inserted[0]?.id ? inserted[0].id.slice(0, 8).toUpperCase() : '—',
         conf: c,
         agent: me.agent_code,
-        orig, up, perNight, nights, roomTotal,
-        extras: [...extras],
+        otherOnly, orig, up, perNight, nights, roomTotal,
+        extras: extras.length,
         total,
       });
       reload();
@@ -135,14 +189,15 @@ export default function CaptureSale() {
 
   const reset = () => {
     setConf(''); setOrig(''); setOrigRate(0); setUp(''); setUpRate(0);
-    setNights(3); setExtras([]); setDone(null); setConfirmOpen(false); setSubmitError('');
+    setNights(3); setExtras([]); setOtherOnly(false); setShowErrors(false);
+    setDone(null); setConfirmOpen(false); setSubmitError('');
   };
   const dirty = conf.trim() || orig || up || extras.length;
   const saveDraft = () => {
     if (!dirty) return;
     const d = {
       id: 'd' + Date.now(), conf: conf.trim().toUpperCase() || '(no conf)', orig, origRate,
-      up, upRate, nights, extras: [...extras], total, when: 'Just now',
+      up, upRate, nights, extras: [...extras], otherOnly, total, when: 'Just now',
     };
     saveDrafts((ds) => [d, ...ds]);
     reset();
@@ -151,7 +206,7 @@ export default function CaptureSale() {
   const resumeDraft = (d) => {
     setConf(d.conf === '(no conf)' ? '' : d.conf);
     setOrig(d.orig); setOrigRate(d.origRate); setUp(d.up); setUpRate(d.upRate);
-    setNights(d.nights); setExtras(d.extras || []);
+    setNights(d.nights); setExtras(d.extras || []); setOtherOnly(Boolean(d.otherOnly));
     saveDrafts((ds) => ds.filter((x) => x.id !== d.id));
     flash('Draft resumed');
   };
@@ -168,8 +223,8 @@ export default function CaptureSale() {
             <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'var(--teal-bg)', border: '1px solid var(--teal-line)', display: 'grid', placeItems: 'center', margin: '0 auto 14px', fontSize: 24, color: 'var(--teal)' }}>✓</div>
             <div style={{ fontSize: 19, fontWeight: 600 }}>Sale captured</div>
             <div style={{ fontSize: 13, color: 'var(--gray)', marginTop: 4 }}>
-              {done.orig} → {done.up}
-              {done.extras.length ? ' · +' + done.extras.length + ' product' + (done.extras.length > 1 ? 's' : '') : ''} · <strong>{money(done.total)}</strong>
+              {done.otherOnly ? 'Other revenue' : done.orig + ' → ' + done.up}
+              {done.extras ? ' · +' + done.extras + ' product' + (done.extras > 1 ? 's' : '') : ''} · <strong>{money(done.total)}</strong>
             </div>
             <div style={{ display: 'inline-flex', gap: 18, marginTop: 18, padding: '12px 20px', background: 'var(--sunken)', borderRadius: 'var(--r)' }}>
               <Stat k="Upsell ref" v={done.ref} />
@@ -192,6 +247,15 @@ export default function CaptureSale() {
           <div>
             <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.015em' }}>Capture a sale</div>
             <div style={{ fontSize: 13, color: 'var(--gray)', marginTop: 2 }}>Enter the booking and what was sold. Prices default in — adjust if needed.</div>
+          </div>
+
+          {/* Other Revenue Only toggle */}
+          <div style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Other Revenue Only</div>
+              <div style={{ fontSize: 11.5, color: 'var(--faint)', marginTop: 1 }}>No room upgrade on this entry — capture extras only.</div>
+            </div>
+            <Toggle on={otherOnly} onClick={() => { setOtherOnly((v) => !v); setShowErrors(false); }} />
           </div>
 
           {!me && (
@@ -246,6 +310,7 @@ export default function CaptureSale() {
           </div>
 
           {/* Room upgrade */}
+          {!otherOnly && (
           <div style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '16px 18px' }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Room upgrade</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10, marginBottom: 12 }}>
@@ -267,10 +332,16 @@ export default function CaptureSale() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10 }}>
               <div>
                 <label style={lbl}>Upgrade to</label>
-                <select value={up} onChange={(e) => pickUp(e.target.value)} style={{ ...inp, borderColor: up && up === orig ? '#DC2626' : 'var(--line2)' }}>
-                  <option value="">Select…</option>
-                  {ROOMS.map((r) => <option key={r.type} value={r.type}>{r.type}</option>)}
-                </select>
+                {noUpgrades ? (
+                  <select value="" disabled style={{ ...inp, color: 'var(--faint)', background: 'var(--sunken)' }}>
+                    <option value="">No upgrades available for this room type</option>
+                  </select>
+                ) : (
+                  <select value={up} onChange={(e) => pickUp(e.target.value)} style={{ ...inp, borderColor: showErrors && sameRoom ? '#DC2626' : 'var(--line2)' }}>
+                    <option value="">Select…</option>
+                    {upOptions.map((r) => <option key={r.type} value={r.type}>{r.type}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label style={lbl}>Rate / night</label>
@@ -280,16 +351,18 @@ export default function CaptureSale() {
                 </div>
               </div>
             </div>
-            {up && up === orig && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Upgrade must differ from the original room.</div>}
+            {showErrors && sameRoom && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Upgraded room is the same as the booked room. Enable “Other Revenue Only” if this entry has no room upgrade.</div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--gray)' }}>
                 Nights
-                <input className="mono" type="number" min="1" value={nights} onChange={(e) => setNights(Math.max(1, parseInt(e.target.value || '1', 10)))} style={{ width: 56, fontSize: 13, fontWeight: 600, border: '1px solid var(--line2)', borderRadius: 4, padding: '4px 6px', textAlign: 'center' }} />
+                <input className="mono" type="number" min="1" max="40" value={nights} onChange={(e) => setNights(Math.min(40, Math.max(1, parseInt(e.target.value || '1', 10))))} style={{ width: 56, fontSize: 13, fontWeight: 600, border: '1px solid ' + (showErrors && nightsBad ? '#DC2626' : 'var(--line2)'), borderRadius: 4, padding: '4px 6px', textAlign: 'center' }} />
               </label>
               <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--gray)' }}>Upgrade delta</span>
               <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: 'var(--teal)' }}>+${perNight}<span style={{ fontSize: 11, color: 'var(--faint)', fontWeight: 400 }}>/n</span></span>
             </div>
+            {showErrors && nightsBad && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Number of nights cannot exceed 40. Please check this entry.</div>}
           </div>
+          )}
 
           {/* Other revenue */}
           <div style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '16px 18px' }}>
@@ -306,17 +379,39 @@ export default function CaptureSale() {
               </div>
             </div>
             {extras.map((e) => (
-              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--line)' }}>
-                {e.custom
-                  ? <input value={e.name} onChange={(ev) => setExtraName(e.id, ev.target.value)} placeholder="Product name…" autoFocus style={{ flex: 1, fontSize: 13, fontWeight: 500, border: '1px solid ' + (e.name.trim() ? 'var(--line2)' : '#DC2626'), borderRadius: 4, padding: '5px 8px', outline: 'none' }} />
-                  : <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{e.name}</span>}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <span style={{ color: 'var(--faint)' }}>$</span>
-                  <input className="mono" type="number" step="5" value={e.price} onChange={(ev) => setExtraPrice(e.id, ev.target.value)} style={{ width: 60, fontSize: 13, fontWeight: 600, border: '1px solid var(--line2)', borderRadius: 4, padding: '4px 6px', textAlign: 'right' }} />
-                </div>
-                <button onClick={() => removeExtra(e.id)} style={{ fontSize: 11.5, color: 'var(--gray)', background: 'none', border: 'none' }}>Remove</button>
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--line)', flexWrap: 'wrap' }}>
+                {e.voucher ? (
+                  <>
+                    <span style={{ flex: 1, minWidth: 110, fontSize: 13, fontWeight: 500 }}>{e.name}</span>
+                    <label style={{ fontSize: 11.5, color: 'var(--gray)', display: 'flex', alignItems: 'center', gap: 5 }}>Nights
+                      <input className="mono" type="number" min="1" max="40" value={e.vnights} onChange={(ev) => setVoucherField(e.id, 'vnights', Math.min(40, Math.max(1, parseInt(ev.target.value || '1', 10))))} style={{ width: 46, fontSize: 13, fontWeight: 600, border: '1px solid var(--line2)', borderRadius: 4, padding: '4px 6px', textAlign: 'center' }} />
+                    </label>
+                    <label style={{ fontSize: 11.5, color: 'var(--gray)', display: 'flex', alignItems: 'center', gap: 5 }}>× per night
+                      <input className="mono" type="number" min="1" value={e.vper} onChange={(ev) => setVoucherField(e.id, 'vper', Math.max(1, parseInt(ev.target.value || '1', 10)))} style={{ width: 46, fontSize: 13, fontWeight: 600, border: '1px solid var(--line2)', borderRadius: 4, padding: '4px 6px', textAlign: 'center' }} />
+                    </label>
+                    <span style={{ fontSize: 11.5, color: 'var(--gray)' }}>= <strong className="mono" style={{ color: 'var(--ink)' }}>{extraQty(e)}</strong> @</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <span style={{ color: 'var(--faint)' }}>$</span>
+                      <input className="mono" type="number" step="5" value={e.unit} onChange={(ev) => setVoucherField(e.id, 'unit', Math.max(0, parseInt(ev.target.value || '0', 10)))} style={{ width: 56, fontSize: 13, fontWeight: 600, border: '1px solid var(--line2)', borderRadius: 4, padding: '4px 6px', textAlign: 'right' }} />
+                    </div>
+                    <span className="mono" style={{ fontSize: 12.5, fontWeight: 600, minWidth: 56, textAlign: 'right' }}>{money(extraAmount(e))}</span>
+                    <button onClick={() => removeExtra(e.id)} style={{ fontSize: 11.5, color: 'var(--gray)', background: 'none', border: 'none' }}>Remove</button>
+                  </>
+                ) : (
+                  <>
+                    {e.custom
+                      ? <input value={e.name} onChange={(ev) => setExtraName(e.id, ev.target.value)} placeholder="Product name…" autoFocus style={{ flex: 1, fontSize: 13, fontWeight: 500, border: '1px solid ' + (e.name.trim() ? 'var(--line2)' : '#DC2626'), borderRadius: 4, padding: '5px 8px', outline: 'none' }} />
+                      : <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{e.name}</span>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <span style={{ color: 'var(--faint)' }}>$</span>
+                      <input className="mono" type="number" step="5" value={e.price} onChange={(ev) => setExtraPrice(e.id, ev.target.value)} style={{ width: 60, fontSize: 13, fontWeight: 600, border: '1px solid var(--line2)', borderRadius: 4, padding: '4px 6px', textAlign: 'right' }} />
+                    </div>
+                    <button onClick={() => removeExtra(e.id)} style={{ fontSize: 11.5, color: 'var(--gray)', background: 'none', border: 'none' }}>Remove</button>
+                  </>
+                )}
               </div>
             ))}
+            {showErrors && noExtrasWhenOther && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Add at least one revenue product.</div>}
           </div>
         </div>
 
@@ -327,16 +422,22 @@ export default function CaptureSale() {
             <div style={{ padding: '14px 16px' }}>
               <Row k="Confirmation" v={conf.trim() ? <span className="mono" style={{ color: 'var(--teal)' }}>{conf.trim().toUpperCase()}</span> : <span style={{ color: 'var(--faint)' }}>—</span>} />
               <Row k="Agent" v={me ? <span className="mono">{me.agent_code}</span> : <span style={{ color: 'var(--faint)' }}>—</span>} />
-              <Row k="Upgrade" v={orig && up ? orig + ' → ' + up : <span style={{ color: 'var(--faint)' }}>—</span>} />
-              <Row k={'Room · ' + perNight + '/n × ' + nights} v={money(roomTotal)} />
-              {extras.map((e) => <Row key={e.id} k={e.name} v={money(e.price)} />)}
+              {otherOnly ? (
+                <Row k="Type" v="Other revenue only" />
+              ) : (
+                <>
+                  <Row k="Upgrade" v={orig && up ? orig + ' → ' + up : <span style={{ color: 'var(--faint)' }}>—</span>} />
+                  <Row k={'Room · ' + perNight + '/n × ' + nights} v={money(roomTotal)} />
+                </>
+              )}
+              {extras.map((e) => <Row key={e.id} k={e.voucher ? e.name + ' · ' + extraQty(e) + ' × $' + extraUnit(e) : e.name} v={money(extraAmount(e))} />)}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 2px', marginTop: 6, borderTop: '1px solid var(--line)', fontSize: 15 }}>
                 <span style={{ fontWeight: 600 }}>Sale total</span>
                 <span className="mono" style={{ fontWeight: 700, color: 'var(--teal)' }}>{money(total)}</span>
               </div>
-              <button onClick={() => valid && setConfirmOpen(true)} disabled={!valid}
-                style={{ marginTop: 14, width: '100%', padding: '12px', background: valid ? 'var(--teal)' : 'var(--line2)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600, cursor: valid ? 'pointer' : 'not-allowed' }}>
-                Submit sale{valid ? ' · ' + money(total) : ''}
+              <button onClick={trySubmit} disabled={busy || !me}
+                style={{ marginTop: 14, width: '100%', padding: '12px', background: busy || !me ? 'var(--line2)' : 'var(--teal)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600, cursor: busy || !me ? 'not-allowed' : 'pointer' }}>
+                Submit sale · {money(total)}
               </button>
               <button onClick={saveDraft} disabled={!dirty}
                 style={{ marginTop: 8, width: '100%', padding: '10px', background: '#fff', color: dirty ? 'var(--ink)' : 'var(--faint)', border: '1px solid var(--line2)', borderRadius: 'var(--r-sm)', fontSize: 13, fontWeight: 500, cursor: dirty ? 'pointer' : 'not-allowed' }}>
@@ -359,9 +460,9 @@ export default function CaptureSale() {
               {dup && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#991B1B', marginBottom: 10, marginTop: 4 }}>⚠ <span><strong>Possible duplicate</strong> — {conf.trim().toUpperCase()} already has a captured sale today. Capture again only if this is a separate product.</span></div>}
               {oversold && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#92400E', marginBottom: 10, marginTop: dup ? 0 : 4 }}>⚠ <span><strong>Oversell risk</strong> — {up} shows {upAvail} available and {soldSame} already captured today. Confirm inventory before proceeding.</span></div>}
               <Row k="Agent" v={<span className="mono">{me?.agent_code}</span>} />
-              <Row k="Upgrade" v={orig + ' → ' + up} />
-              <Row k={'Room · $' + perNight + '/n × ' + nights} v={money(roomTotal)} />
-              {extras.map((e) => <Row key={e.id} k={e.name || '(unnamed)'} v={money(e.price)} />)}
+              {!otherOnly && <Row k="Upgrade" v={orig + ' → ' + up} />}
+              {!otherOnly && <Row k={'Room · $' + perNight + '/n × ' + nights} v={money(roomTotal)} />}
+              {extras.map((e) => <Row key={e.id} k={e.voucher ? (e.name || '(unnamed)') + ' · ' + extraQty(e) + ' × $' + extraUnit(e) : e.name || '(unnamed)'} v={money(extraAmount(e))} />)}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 4px', fontSize: 16 }}>
                 <span style={{ fontWeight: 600 }}>Guest pays</span>
                 <span className="mono" style={{ fontWeight: 700, color: 'var(--teal)' }}>{money(total)}</span>

@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { TopBar } from '../components/TopBar.jsx';
 import { Toggle } from '../components/ui.jsx';
 import { ROOMS, RATE_PLANS } from '../data/catalog.js';
 import { round5 } from '../lib/format.js';
+import { fetchRoomRanks, saveRoomRanks } from '../store/roomStore.js';
 
 // Brand-level master (inherited). Property can override rate + sellable + availability.
-const MASTER = ROOMS.map((r) => ({ id: r.id, type: r.type, bed: r.bed, occ: r.occ, rate: r.rate, total: r.total, sellable: r.sellable }));
+const MASTER = ROOMS.map((r) => ({ id: r.id, type: r.type, bed: r.bed, occ: r.occ, rate: r.rate, total: r.total, sellable: r.sellable, rank: r.rank }));
+const byRank = (a, b) => a.rank - b.rank;
 // availability sold tonight (for the Availability tab)
 const SOLD = Object.fromEntries(ROOMS.map((r) => [r.id, r.sold]));
 
@@ -26,9 +28,10 @@ const Tab = ({ id, active, set, children, count }) => (
 export default function RoomsAndRates() {
   const [prop, setProp] = useState('grand'); // grand | harbour
   const [tab, setTab] = useState('rooms');
-  const [rows, setRows] = useState(MASTER.map((r) => ({ ...r })));
+  const [rows, setRows] = useState(MASTER.map((r) => ({ ...r })).sort(byRank));
   const [overridden, setOverridden] = useState({}); // id -> true if property-overridden
   const [editId, setEditId] = useState(null);
+  const [dragId, setDragId] = useState(null); // room being dragged
   const [toast, setToast] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addMode, setAddMode] = useState('room'); // room | other
@@ -66,6 +69,37 @@ export default function RoomsAndRates() {
     setToast(m);
     clearTimeout(window.__t);
     window.__t = setTimeout(() => setToast(''), 1900);
+  };
+
+  // Load persisted ranks (falls back to catalog rank if the table is empty).
+  useEffect(() => {
+    fetchRoomRanks()
+      .then((ranks) => {
+        if (!ranks || !ranks.length) return;
+        const rankById = Object.fromEntries(ranks.map((r) => [r.id, r.rank]));
+        setRows((rs) => rs.map((r) => ({ ...r, rank: rankById[r.id] ?? r.rank })).sort(byRank));
+      })
+      .catch(() => {});
+  }, []);
+
+  // Drag-to-reorder: move dragged room to the drop target's slot, renumber ranks
+  // 1..N, update optimistically, then persist (revert on failure).
+  const onDrop = (targetId) => {
+    if (!dragId || dragId === targetId) { setDragId(null); return; }
+    const prev = rows;
+    const ordered = [...rows].sort(byRank);
+    const from = ordered.findIndex((r) => r.id === dragId);
+    const to = ordered.findIndex((r) => r.id === targetId);
+    if (from < 0 || to < 0) { setDragId(null); return; }
+    const next = [...ordered];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    const reranked = next.map((r, i) => ({ ...r, rank: i + 1 }));
+    setRows(reranked);
+    setDragId(null);
+    saveRoomRanks(reranked.map((r) => ({ id: r.id, type: r.type, rank: r.rank })))
+      .then(() => flash('Upgrade order saved'))
+      .catch((e) => { setRows(prev); flash(e.message || 'Could not save order'); });
   };
 
   const patch = (id, field, val) => {
@@ -156,15 +190,23 @@ export default function RoomsAndRates() {
           <div style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }}>
             <table>
               <thead><tr style={{ background: 'var(--sunken)' }}>
+                <th style={{ width: 30, padding: '9px 0 9px 12px' }} />
                 {['Room type', 'Bed / occ.', 'Base rate / night', 'Inventory', 'Sellable', ''].map((h, i) => (
                   <th key={i} style={{ textAlign: i === 2 || i === 3 ? 'right' : 'left', fontSize: 9.5, fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--faint)', padding: '9px 14px' }}>{h}</th>
                 ))}
               </tr></thead>
               <tbody>
-                {rows.map((r) => {
+                {rows.slice().sort(byRank).map((r) => {
                   const ov = overridden[r.id];
                   return (
-                    <tr key={r.id} style={{ borderTop: '1px solid var(--line)', background: ov ? '#FCFBF7' : '#fff' }}>
+                    <tr key={r.id}
+                      onDragOver={(e) => { e.preventDefault(); }}
+                      onDrop={() => onDrop(r.id)}
+                      style={{ borderTop: '1px solid var(--line)', background: ov ? '#FCFBF7' : '#fff', opacity: dragId === r.id ? 0.4 : 1 }}>
+                      <td style={{ padding: '11px 0 11px 12px', width: 30 }}>
+                        <span draggable onDragStart={() => setDragId(r.id)} onDragEnd={() => setDragId(null)} title="Drag to reorder"
+                          style={{ cursor: 'grab', color: 'var(--faint)', fontSize: 15, lineHeight: 1, userSelect: 'none', display: 'inline-block' }}>⠿</span>
+                      </td>
                       <td style={{ padding: '11px 14px' }}>
                         <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 7 }}>
                           {r.type}

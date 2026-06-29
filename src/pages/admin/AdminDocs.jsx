@@ -125,7 +125,7 @@ export default function AdminDocs() {
                   Upsell Capture is a multi-tenant tool for hotels to record room upgrades and ancillary
                   ("other revenue") sales their front-desk agents make at check-in. Each capture is logged
                   against a booking confirmation and attributed to the agent who sold it. Captured data flows
-                  to your systems automatically — in near real-time via webhook, or on demand via CSV export.
+                  to your systems automatically — in near real-time via webhook, or on demand via Excel export.
                 </P>
                 <SubH>How it works</SubH>
                 <Step n="1" title="Admin sets up your hotel and agents">
@@ -135,7 +135,7 @@ export default function AdminDocs() {
                   Agents record the room upgrade and any extras against the guest's confirmation number.
                 </Step>
                 <Step n="3" title="Data flows to your systems in real-time">
-                  Every capture is pushed to your endpoint via webhook, and is available for CSV export at any time.
+                  Every capture is pushed to your endpoint via webhook, and is available for Excel export at any time.
                 </Step>
                 <SubH>Who has access</SubH>
                 <UL items={[
@@ -220,8 +220,8 @@ export default function AdminDocs() {
             <section {...sec('data')}>
               <Card>
                 <H2>Data &amp; Exports</H2>
-                <SubH>CSV export</SubH>
-                <P>On the <strong>Agent Sales</strong> page, click <strong>Export CSV</strong> to download the captures currently in view.</P>
+                <SubH>Excel export</SubH>
+                <P>On the <strong>Agent Sales</strong> page, click <strong>Export Excel</strong> to download the captures currently in view as an <span className="mono">.xlsx</span> file with auto-fit column widths.</P>
                 <SubH>Columns included</SubH>
                 <UL items={['Date', 'Confirmation', 'Product', 'Type', 'Qty', 'Unit Price', 'Amount']} />
                 <SubH>Date filters</SubH>
@@ -229,7 +229,7 @@ export default function AdminDocs() {
                 <SubH>Filtering by agent</SubH>
                 <P>Use the agent dropdown to narrow to a single agent before exporting; the export matches the on-screen filter.</P>
                 <SubH>File naming</SubH>
-                <P><span className="mono">upsell-capture-[today|mtd|all]-YYYY-MM-DD.csv</span></P>
+                <P><span className="mono">upsell-capture-[today|mtd|all]-YYYY-MM-DD.xlsx</span></P>
                 <SubH>Planned</SubH>
                 <UL items={[
                   <>Automated daily export via email <Soon /></>,
@@ -246,7 +246,7 @@ export default function AdminDocs() {
                 <Faq q="What happens if a webhook fails?" a="The system retries up to 3 times. You can see all attempts in the Webhook Logs section. If it continues to fail, check that the URL and secret are correct." />
                 <Faq q="Can I change an agent's email address?" a="Not yet via the admin panel. Contact support to change an agent's email address." />
                 <Faq q="What happens to data if I deactivate a hotel?" a="All historical captures are retained. The hotel and its agents are simply hidden from active views." />
-                <Faq q="How quickly does data appear after a sale is captured?" a="Webhooks fire within seconds of a capture being saved. CSV exports reflect data in real time." />
+                <Faq q="How quickly does data appear after a sale is captured?" a="Webhooks fire within seconds of a capture being saved. Excel exports reflect data in real time." />
                 <Faq q="Can a hotel configure their own webhook?" a={<>Hotels can view their webhook status and test it from the Integrations section when logged in as an agent. To change the webhook URL or secret, contact <a href="mailto:support@upsellcapture.com" style={{ color: 'var(--teal)' }}>support@upsellcapture.com</a>.</>} />
                 <Faq q="Is the data secure?" a="Yes. Each hotel can only see their own data. Row Level Security enforced at the database level ensures complete data isolation between properties." />
               </Card>
