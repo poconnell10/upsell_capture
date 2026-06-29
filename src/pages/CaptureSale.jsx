@@ -123,17 +123,27 @@ export default function CaptureSale() {
   // Validation (surfaced on submit attempt, not per keystroke)
   // Same-room is kept as a belt-and-braces safety net; the rank-filtered
   // "Upgrade to" dropdown should make it (and any downgrade) impossible.
+  const confMissing = !conf.trim();
   const sameRoom = !otherOnly && Boolean(up) && up === orig;
-  const nightsBad = !otherOnly && (nights < 1 || nights > 40);
+  const nightsLow = !otherOnly && nights < 1;
+  const nightsHigh = !otherOnly && nights > 40;
+  const nightsBad = nightsLow || nightsHigh;
   const roomsMissing = !otherOnly && (!orig || !up);
   const voucherBad = extras.some(
     (e) => e.voucher && ((e.vnights || 0) < 1 || (e.vnights || 0) > 40 || (e.vper || 0) < 1),
   );
   const noExtrasWhenOther = otherOnly && extras.length === 0;
   const extrasNamed = extras.every((e) => (e.name || '').trim());
+  // Each extra must have qty >= 1 and a unit price > 0.
+  const extrasInvalid = extras.some((e) => extraQty(e) < 1 || extraUnit(e) <= 0);
+  // $0 room delta with two different rooms — soft confirm (only reachable when
+  // extras keep the total above $0; otherwise the zero-total guard hard-blocks).
+  const zeroDelta = !otherOnly && Boolean(orig) && Boolean(up) && up !== orig && rawDelta === 0;
+  const zeroTotal = total <= 0; // hard catch-all
 
   const valid =
-    Boolean(me) && conf.trim() && extrasNamed && !voucherBad && !noExtrasWhenOther &&
+    Boolean(me) && !confMissing && extrasNamed && !extrasInvalid && !voucherBad &&
+    !noExtrasWhenOther && !zeroTotal &&
     (otherOnly || (!roomsMissing && !sameRoom && !nightsBad));
 
   const trySubmit = () => {
@@ -307,6 +317,7 @@ export default function CaptureSale() {
                 <input className="mono" value={me ? me.agent_code + ' · ' + me.name : '—'} readOnly style={{ ...inp, background: 'var(--sunken)', color: 'var(--gray)', fontWeight: 600 }} />
               </div>
             </div>
+            {showErrors && confMissing && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Please enter a confirmation number.</div>}
           </div>
 
           {/* Room upgrade */}
@@ -351,6 +362,7 @@ export default function CaptureSale() {
                 </div>
               </div>
             </div>
+            {showErrors && roomsMissing && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Please select both the booked and upgraded room.</div>}
             {showErrors && sameRoom && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Upgraded room is the same as the booked room. Enable “Other Revenue Only” if this entry has no room upgrade.</div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--gray)' }}>
@@ -360,7 +372,8 @@ export default function CaptureSale() {
               <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--gray)' }}>Upgrade delta</span>
               <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: 'var(--teal)' }}>+${perNight}<span style={{ fontSize: 11, color: 'var(--faint)', fontWeight: 400 }}>/n</span></span>
             </div>
-            {showErrors && nightsBad && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Number of nights cannot exceed 40. Please check this entry.</div>}
+            {showErrors && nightsLow && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Nights must be at least 1.</div>}
+            {showErrors && nightsHigh && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Number of nights cannot exceed 40. Please check this entry.</div>}
           </div>
           )}
 
@@ -412,6 +425,7 @@ export default function CaptureSale() {
               </div>
             ))}
             {showErrors && noExtrasWhenOther && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>Add at least one revenue product.</div>}
+            {showErrors && extrasInvalid && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 8 }}>One or more extras has an invalid quantity or price.</div>}
           </div>
         </div>
 
@@ -435,6 +449,7 @@ export default function CaptureSale() {
                 <span style={{ fontWeight: 600 }}>Sale total</span>
                 <span className="mono" style={{ fontWeight: 700, color: 'var(--teal)' }}>{money(total)}</span>
               </div>
+              {showErrors && zeroTotal && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 12, marginBottom: -2 }}>Total sale amount is $0.00. Please check your entries before submitting.</div>}
               <button onClick={trySubmit} disabled={busy || !me}
                 style={{ marginTop: 14, width: '100%', padding: '12px', background: busy || !me ? 'var(--line2)' : 'var(--teal)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', fontSize: 14, fontWeight: 600, cursor: busy || !me ? 'not-allowed' : 'pointer' }}>
                 Submit sale · {money(total)}
@@ -459,6 +474,7 @@ export default function CaptureSale() {
             <div style={{ padding: '8px 20px' }}>
               {dup && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#991B1B', marginBottom: 10, marginTop: 4 }}>⚠ <span><strong>Possible duplicate</strong> — {conf.trim().toUpperCase()} already has a captured sale today. Capture again only if this is a separate product.</span></div>}
               {oversold && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#92400E', marginBottom: 10, marginTop: dup ? 0 : 4 }}>⚠ <span><strong>Oversell risk</strong> — {up} shows {upAvail} available and {soldSame} already captured today. Confirm inventory before proceeding.</span></div>}
+              {zeroDelta && <div style={{ display: 'flex', gap: 8, padding: '9px 11px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--r-sm)', fontSize: 11.5, color: '#92400E', marginBottom: 10, marginTop: dup || oversold ? 0 : 4 }}>⚠ <span>This upgrade has a <strong>$0.00 room delta</strong>. Are you sure you want to submit?</span></div>}
               <Row k="Agent" v={<span className="mono">{me?.agent_code}</span>} />
               {!otherOnly && <Row k="Upgrade" v={orig + ' → ' + up} />}
               {!otherOnly && <Row k={'Room · $' + perNight + '/n × ' + nights} v={money(roomTotal)} />}
