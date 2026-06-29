@@ -26,6 +26,8 @@ export const availOf = (type) => {
 export const PRODUCTS = [
   { id: 'early', name: 'Early arrival', price: 35 },
   { id: 'late',  name: 'Late checkout', price: 40 },
+  // `voucher: true` → quantity is nights × vouchers-per-night, priced per voucher.
+  { id: 'breakfast', name: 'Breakfast voucher', price: 25, voucher: true },
 ];
 export const OTHER_CATALOG = [
   ['Early arrival', 35],

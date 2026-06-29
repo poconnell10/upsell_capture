@@ -9,7 +9,7 @@ Built from the four interactive prototypes as a single **Vite + React** app.
 
 | Route      | Screen          | What it does |
 |------------|-----------------|--------------|
-| `/`        | **Agent Sales** | Dashboard of captured upsells — line items, per-agent rollup, KPIs, CSV export, quick-capture modal. |
+| `/`        | **Agent Sales** | Dashboard of captured upsells — line items, per-agent rollup, KPIs, Excel (.xlsx) export, quick-capture modal. |
 | `/capture` | **Capture Sale**| The core flow: confirmation + agent, room upgrade (rate delta × nights), other-revenue add-ons, drafts, duplicate/oversell guards, confirm & capture. |
 | `/rooms`   | **Rooms & Rates**| Base room products with brand-inherit / property-override, inline rate edit, availability (no-oversell) and rate plans. |
 | `/other`   | **Other Revenue**| Per-product tax (exclusive/inclusive) and property fees, with a live worked-example calculator. |
